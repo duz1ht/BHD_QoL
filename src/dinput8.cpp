@@ -13,6 +13,8 @@ constexpr uintptr_t kPatchAddressHeightStore = 0x52A956;
 HMODULE g_realDInput8 = nullptr;
 
 struct Patch {
+    const char* title;
+    const char* description;
     uintptr_t virtualAddress;
     std::array<unsigned char, 10> expected;
     std::array<unsigned char, 10> replacement;
@@ -20,18 +22,24 @@ struct Patch {
 };
 
 const Patch kPatches[] = {
-    // 0052A934: MOV EAX,0x200 -> MOV EAX,0x800
-    {kPatchAddressMovEax,
+    // Patch group: Increase NVG viewport resolution.
+    // Function: SetupNVGViewPort()
+    // Purpose: raises the night-vision render target from 512x256 to 2048x1024.
+    {"Increase NVG viewport width immediate",
+     "SetupNVGViewPort(): MOV EAX,0x200 -> MOV EAX,0x800",
+     kPatchAddressMovEax,
      {0xB8, 0x00, 0x02, 0x00, 0x00},
      {0xB8, 0x00, 0x08, 0x00, 0x00},
      5},
-    // 0052A94C: MOV [00E0498C],0x200 -> MOV [00E0498C],0x800
-    {kPatchAddressWidthStore,
+    {"Increase NVG viewport stored width",
+     "SetupNVGViewPort(): MOV [00E0498C],0x200 -> MOV [00E0498C],0x800",
+     kPatchAddressWidthStore,
      {0xC7, 0x05, 0x8C, 0x49, 0xE0, 0x00, 0x00, 0x02, 0x00, 0x00},
      {0xC7, 0x05, 0x8C, 0x49, 0xE0, 0x00, 0x00, 0x08, 0x00, 0x00},
      10},
-    // 0052A956: MOV [00E04990],0x100 -> MOV [00E04990],0x400
-    {kPatchAddressHeightStore,
+    {"Increase NVG viewport stored height",
+     "SetupNVGViewPort(): MOV [00E04990],0x100 -> MOV [00E04990],0x400",
+     kPatchAddressHeightStore,
      {0xC7, 0x05, 0x90, 0x49, 0xE0, 0x00, 0x00, 0x01, 0x00, 0x00},
      {0xC7, 0x05, 0x90, 0x49, 0xE0, 0x00, 0x00, 0x04, 0x00, 0x00},
      10},
