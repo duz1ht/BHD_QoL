@@ -23,6 +23,12 @@ The DLL also installs dynamic-resolution cursor and viewport hooks:
 
 Each patch checks the expected bytes before writing, so unsupported executables are left unchanged.
 
+## Knowledge_Base policy
+
+The `Knowledge_Base/` directory is a read-only reference area for LLM agents such as Codex. It may contain code, examples, or material extracted from other projects so that maintainers and agents can study that knowledge and use it as a basis for implementing changes in the main project tree.
+
+Do not create, edit, move, rename, delete, format, or otherwise modify files under `Knowledge_Base/`. All implementation changes must be applied outside `Knowledge_Base/`, in the main repository files.
+
 ## Build
 
 Cross-compile for 32-bit Windows with MinGW:
