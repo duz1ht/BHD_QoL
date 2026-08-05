@@ -16,10 +16,10 @@ The DLL also installs dynamic-resolution cursor and viewport hooks:
 
 | Address | Original | Patched | Purpose |
 | --- | --- | --- | --- |
-| `004BC711` | `MOV DWORD PTR [009FB3D8],EBX` | `JMP 005E4879` | Compute additional resolution values in `LoadingGame()` |
-| `00567972` | `ADD EAX,0xF0` | `JMP 005E48C0` | Include dynamic resolutions in `PollMouseInput()` cursor positioning |
 | `004623D2` | `MOV DWORD PTR [EBP + -0x8],0x27F` | `JMP 005E4912` | Include dynamic resolutions in `InitializeInGameSystems()` ClipCursor setup |
 | `004628D3` | `MOV DWORD PTR [EBP + -0x8],0x27F` | `JMP 005E492B` | Include dynamic resolutions in `ClipCursorToViewPort()` |
+| `004BC711` | `MOV DWORD PTR [009FB3D8],EBX` | `JMP 005E4879` | Compute additional resolution values in `LoadingGame()` |
+| `00567972` | `ADD EAX,0xF0` | `JMP 005E48C0` | Include dynamic resolutions in `PollMouseInput()` cursor positioning |
 
 Each patch checks the expected bytes before writing, so unsupported executables are left unchanged.
 
