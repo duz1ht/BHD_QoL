@@ -12,10 +12,11 @@ The DLL patches `SetupNVGViewPort()` at process attach time to increase the nigh
 | `0052A94C` | `MOV [00E0498C],0x200` | `MOV [00E0498C],0x800` |
 | `0052A956` | `MOV [00E04990],0x100` | `MOV [00E04990],0x400` |
 
-The DLL also installs a dynamic-resolution ClipCursor viewport hook:
+The DLL also installs dynamic-resolution cursor and viewport hooks:
 
 | Address | Original | Patched | Purpose |
 | --- | --- | --- | --- |
+| `004BC711` | `MOV DWORD PTR [009FB3D8],EBX` | `JMP 005E4879` | Compute additional resolution values in `LoadingGame()` |
 | `004628D3` | `MOV DWORD PTR [EBP + -0x8],0x27F` | `JMP 005E492B` | Include dynamic resolutions in `ClipCursorToViewPort()` |
 
 Each patch checks the expected bytes before writing, so unsupported executables are left unchanged.
