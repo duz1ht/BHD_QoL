@@ -1,8 +1,11 @@
 #include <windows.h>
 #include <shlwapi.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <vector>
 
 namespace {
 constexpr uintptr_t kImageBase = 0x400000;
@@ -23,6 +26,7 @@ struct PatchConfig {
     bool dynamicResolution = true;
     bool mouseCursorFix = true;
     bool clipCursorFix = true;
+    bool rawInputFix = true;
     bool logAppliedPatches = false;
 };
 
@@ -124,6 +128,33 @@ const Patch kClipCursorPatches[] = {
      kPatchAddressClipCursorToViewPort, BYTE_SPAN(kClipCursorExpected), BYTE_SPAN(kClipCursorReplacement), false},
 };
 
+constexpr uintptr_t kFixMouseLogicAddress = 0x005E48C0;
+constexpr uintptr_t kFixMouseLogicReturnAddress = 0x005679BA;
+constexpr uintptr_t kCursorXAddress = 0x00F655E0;
+constexpr uintptr_t kCursorYAddress = 0x00F655E4;
+constexpr uintptr_t kRawMouseXAddress = 0x00F655EC;
+constexpr uintptr_t kRawMouseYAddress = 0x00F655F0;
+constexpr uintptr_t kVideoWidthAddress = 0x009F72C0;
+constexpr uintptr_t kVideoHeightAddress = 0x009F72C4;
+
+std::atomic<LONG> g_pendingRawMouseDx{0};
+std::atomic<LONG> g_pendingRawMouseDy{0};
+std::atomic<HWND> g_rawInputGameWindow{nullptr};
+std::atomic<WNDPROC> g_originalWndProc{nullptr};
+std::atomic<bool> g_wndProcHooked{false};
+std::atomic<bool> g_rawInputRegistered{false};
+std::atomic<bool> g_rawInputThreadStop{false};
+std::atomic<bool> g_fixMouseLogicHooked{false};
+
+using ClipCursorFn = BOOL(WINAPI*)(const RECT*);
+ClipCursorFn g_realClipCursor = nullptr;
+std::atomic<bool> g_mouseCaptured{false};
+
+unsigned char g_fixMouseOriginalBytes[6] = {};
+void* g_fixMouseTrampoline = nullptr;
+using FixMouseTrampolineFn = void(__stdcall*)();
+FixMouseTrampolineFn g_fixMouseTrampolineFn = nullptr;
+
 bool BytesEqual(const unsigned char* current, ByteSpan expected) {
     if (expected.bytes == nullptr) {
         return false;
@@ -205,6 +236,374 @@ bool ApplyPatchGroup(const Patch (&patches)[Count]) {
     return appliedAll;
 }
 
+LONG ReadGameLong(uintptr_t address) {
+    return *reinterpret_cast<volatile LONG*>(address);
+}
+
+void WriteGameLong(uintptr_t address, LONG value) {
+    *reinterpret_cast<volatile LONG*>(address) = value;
+}
+
+bool CenterCursorOnGameClient(HWND hwnd) {
+    if (hwnd == nullptr || !IsWindow(hwnd)) {
+        return false;
+    }
+
+    RECT clientRect = {};
+    if (!GetClientRect(hwnd, &clientRect)) {
+        return false;
+    }
+
+    POINT center = {};
+    center.x = (clientRect.right - clientRect.left) / 2;
+    center.y = (clientRect.bottom - clientRect.top) / 2;
+    if (!ClientToScreen(hwnd, &center)) {
+        return false;
+    }
+
+    return SetCursorPos(center.x, center.y) != FALSE;
+}
+
+bool RegisterRawMouseInput(HWND hwnd) {
+    RAWINPUTDEVICE rawMouse = {};
+    rawMouse.usUsagePage = 0x01;
+    rawMouse.usUsage = 0x02;
+    rawMouse.dwFlags = RIDEV_INPUTSINK;
+    rawMouse.hwndTarget = hwnd;
+
+    return RegisterRawInputDevices(&rawMouse, 1, sizeof(rawMouse)) != FALSE;
+}
+
+LRESULT CALLBACK RawInputWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (message == WM_INPUT) {
+        UINT size = 0;
+        GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, nullptr, &size, sizeof(RAWINPUTHEADER));
+
+        if (size > 0 && size < 4096) {
+            std::vector<BYTE> buffer(size);
+            if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, buffer.data(), &size,
+                                sizeof(RAWINPUTHEADER)) == size) {
+                const auto* rawInput = reinterpret_cast<const RAWINPUT*>(buffer.data());
+                if (rawInput->header.dwType == RIM_TYPEMOUSE) {
+                    const LONG dx = rawInput->data.mouse.lLastX;
+                    const LONG dy = rawInput->data.mouse.lLastY;
+                    if (dx != 0 || dy != 0) {
+                        g_pendingRawMouseDx.fetch_add(dx, std::memory_order_relaxed);
+                        g_pendingRawMouseDy.fetch_add(dy, std::memory_order_relaxed);
+                    }
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    const WNDPROC originalWndProc = g_originalWndProc.load(std::memory_order_relaxed);
+    return originalWndProc != nullptr ? CallWindowProcW(originalWndProc, hwnd, message, wParam, lParam)
+                                      : DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+struct WindowCandidate {
+    HWND hwnd = nullptr;
+    int area = 0;
+};
+
+BOOL CALLBACK FindGameWindowCallback(HWND hwnd, LPARAM lParam) {
+    auto* best = reinterpret_cast<WindowCandidate*>(lParam);
+
+    DWORD windowProcessId = 0;
+    GetWindowThreadProcessId(hwnd, &windowProcessId);
+    if (windowProcessId != GetCurrentProcessId()) {
+        return TRUE;
+    }
+
+    if (GetWindow(hwnd, GW_OWNER) != nullptr) {
+        return TRUE;
+    }
+
+    if ((GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0) {
+        return TRUE;
+    }
+
+    RECT clientRect = {};
+    if (!GetClientRect(hwnd, &clientRect)) {
+        return TRUE;
+    }
+
+    const int width = clientRect.right - clientRect.left;
+    const int height = clientRect.bottom - clientRect.top;
+    if (width < 400 || height < 300) {
+        return TRUE;
+    }
+
+    const int area = width * height;
+    if (area > best->area) {
+        best->area = area;
+        best->hwnd = hwnd;
+    }
+
+    return TRUE;
+}
+
+HWND FindBestGameWindow() {
+    WindowCandidate best = {};
+    EnumWindows(FindGameWindowCallback, reinterpret_cast<LPARAM>(&best));
+    return best.hwnd;
+}
+
+bool HookGameWindowProcOnce(HWND hwnd) {
+    if (hwnd == nullptr || g_wndProcHooked.load(std::memory_order_relaxed)) {
+        return false;
+    }
+
+    SetLastError(0);
+    const LONG_PTR previous = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(RawInputWndProc));
+    if (previous == 0 && GetLastError() != 0) {
+        return false;
+    }
+
+    g_originalWndProc.store(reinterpret_cast<WNDPROC>(previous), std::memory_order_relaxed);
+    g_rawInputGameWindow.store(hwnd, std::memory_order_relaxed);
+    g_wndProcHooked.store(true, std::memory_order_relaxed);
+    return true;
+}
+
+bool PatchIatByFunctionName(void* moduleBase, const char* functionName, void* replacement, void** original) {
+    if (moduleBase == nullptr || functionName == nullptr || replacement == nullptr) {
+        return false;
+    }
+
+    auto* dosHeader = reinterpret_cast<IMAGE_DOS_HEADER*>(moduleBase);
+    if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE) {
+        return false;
+    }
+
+    auto* ntHeaders = reinterpret_cast<IMAGE_NT_HEADERS*>(reinterpret_cast<BYTE*>(moduleBase) + dosHeader->e_lfanew);
+    if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) {
+        return false;
+    }
+
+    const auto& importDirectory = ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (importDirectory.VirtualAddress == 0 || importDirectory.Size == 0) {
+        return false;
+    }
+
+    auto* importDescriptor =
+        reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(reinterpret_cast<BYTE*>(moduleBase) + importDirectory.VirtualAddress);
+    for (; importDescriptor->Name != 0; ++importDescriptor) {
+        auto* iat = reinterpret_cast<IMAGE_THUNK_DATA*>(reinterpret_cast<BYTE*>(moduleBase) + importDescriptor->FirstThunk);
+        auto* names = importDescriptor->OriginalFirstThunk != 0
+                          ? reinterpret_cast<IMAGE_THUNK_DATA*>(reinterpret_cast<BYTE*>(moduleBase) +
+                                                                importDescriptor->OriginalFirstThunk)
+                          : iat;
+
+        for (; iat->u1.Function != 0; ++iat, ++names) {
+            if ((names->u1.Ordinal & IMAGE_ORDINAL_FLAG) != 0) {
+                continue;
+            }
+
+            auto* importByName =
+                reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(reinterpret_cast<BYTE*>(moduleBase) + names->u1.AddressOfData);
+            if (lstrcmpA(reinterpret_cast<const char*>(importByName->Name), functionName) != 0) {
+                continue;
+            }
+
+            DWORD oldProtect = 0;
+            if (!VirtualProtect(&iat->u1.Function, sizeof(void*), PAGE_READWRITE, &oldProtect)) {
+                return false;
+            }
+
+            void* previous = reinterpret_cast<void*>(static_cast<uintptr_t>(iat->u1.Function));
+            iat->u1.Function = reinterpret_cast<uintptr_t>(replacement);
+
+            DWORD ignored = 0;
+            VirtualProtect(&iat->u1.Function, sizeof(void*), oldProtect, &ignored);
+            FlushInstructionCache(GetCurrentProcess(), &iat->u1.Function, sizeof(void*));
+
+            if (original != nullptr) {
+                *original = previous;
+            }
+            return true;
+        }
+    }
+
+    return false;
+}
+
+BOOL WINAPI HookClipCursor(const RECT* rect) {
+    g_mouseCaptured.store(rect != nullptr, std::memory_order_relaxed);
+    return g_realClipCursor != nullptr ? g_realClipCursor(rect) : FALSE;
+}
+
+bool InstallClipCursorIatHook() {
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32 == nullptr) {
+        user32 = LoadLibraryW(L"user32.dll");
+    }
+    if (user32 == nullptr) {
+        return false;
+    }
+
+    g_realClipCursor = reinterpret_cast<ClipCursorFn>(GetProcAddress(user32, "ClipCursor"));
+    if (g_realClipCursor == nullptr) {
+        return false;
+    }
+
+    void* original = nullptr;
+    const bool patched = PatchIatByFunctionName(GetModuleHandleW(nullptr), "ClipCursor",
+                                                reinterpret_cast<void*>(&HookClipCursor), &original);
+    if (patched && original != nullptr) {
+        g_realClipCursor = reinterpret_cast<ClipCursorFn>(original);
+    }
+    return patched;
+}
+
+void* MakeTrampoline(const unsigned char* originalBytes, size_t originalLength, void* returnAddress) {
+    auto* memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, 64, MEM_COMMIT | MEM_RESERVE,
+                                                           PAGE_EXECUTE_READWRITE));
+    if (memory == nullptr) {
+        return nullptr;
+    }
+
+    std::memcpy(memory, originalBytes, originalLength);
+    unsigned char* jump = memory + originalLength;
+    jump[0] = 0xE9;
+    *reinterpret_cast<int32_t*>(jump + 1) = static_cast<int32_t>(static_cast<unsigned char*>(returnAddress) - (jump + 5));
+    FlushInstructionCache(GetCurrentProcess(), memory, 64);
+    return memory;
+}
+
+bool WriteRelativeJump5(void* address, void* destination, int extraNops) {
+    DWORD oldProtect = 0;
+    if (!VirtualProtect(address, 5 + extraNops, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        return false;
+    }
+
+    auto* bytes = static_cast<unsigned char*>(address);
+    bytes[0] = 0xE9;
+    *reinterpret_cast<int32_t*>(bytes + 1) =
+        static_cast<int32_t>(static_cast<unsigned char*>(destination) - (bytes + 5));
+    for (int i = 0; i < extraNops; ++i) {
+        bytes[5 + i] = 0x90;
+    }
+
+    DWORD ignored = 0;
+    VirtualProtect(address, 5 + extraNops, oldProtect, &ignored);
+    FlushInstructionCache(GetCurrentProcess(), address, 5 + extraNops);
+    return true;
+}
+
+bool OnFixMouseLogic() {
+    if (!g_mouseCaptured.load(std::memory_order_relaxed)) {
+        return false;
+    }
+
+    const LONG dx = g_pendingRawMouseDx.exchange(0, std::memory_order_relaxed);
+    const LONG dy = g_pendingRawMouseDy.exchange(0, std::memory_order_relaxed);
+
+    CenterCursorOnGameClient(g_rawInputGameWindow.load(std::memory_order_relaxed));
+
+    const LONG halfWidth = ReadGameLong(kVideoWidthAddress) >> 1;
+    const LONG halfHeight = ReadGameLong(kVideoHeightAddress) >> 1;
+    WriteGameLong(kRawMouseXAddress, dx);
+    WriteGameLong(kRawMouseYAddress, dy);
+    WriteGameLong(kCursorXAddress, halfWidth);
+    WriteGameLong(kCursorYAddress, halfHeight);
+    return true;
+}
+
+__declspec(naked) void FixMouseLogicDetour() {
+    __asm {
+        pushad
+        pushfd
+        call OnFixMouseLogic
+        test eax, eax
+        jz not_captured
+
+        popfd
+        popad
+        mov eax, kFixMouseLogicReturnAddress
+        jmp eax
+
+    not_captured:
+        popfd
+        popad
+        jmp g_fixMouseTrampolineFn
+    }
+}
+
+bool FixMouseLogicBytesLookRight() {
+    auto* bytes = reinterpret_cast<unsigned char*>(kFixMouseLogicAddress);
+    __try {
+        return bytes[0] == 0x03 && bytes[1] == 0x05 &&
+               *reinterpret_cast<uint32_t*>(bytes + 2) == 0x0060C326;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+bool InstallFixMouseLogicHookOnce() {
+    if (g_fixMouseLogicHooked.load(std::memory_order_relaxed)) {
+        return true;
+    }
+
+    if (!FixMouseLogicBytesLookRight()) {
+        return false;
+    }
+
+    auto* target = reinterpret_cast<unsigned char*>(kFixMouseLogicAddress);
+    std::memcpy(g_fixMouseOriginalBytes, target, sizeof(g_fixMouseOriginalBytes));
+
+    g_fixMouseTrampoline =
+        MakeTrampoline(g_fixMouseOriginalBytes, sizeof(g_fixMouseOriginalBytes),
+                       reinterpret_cast<void*>(kFixMouseLogicAddress + sizeof(g_fixMouseOriginalBytes)));
+    if (g_fixMouseTrampoline == nullptr) {
+        return false;
+    }
+
+    g_fixMouseTrampolineFn = reinterpret_cast<FixMouseTrampolineFn>(g_fixMouseTrampoline);
+    if (!WriteRelativeJump5(target, reinterpret_cast<void*>(&FixMouseLogicDetour), 1)) {
+        return false;
+    }
+
+    g_fixMouseLogicHooked.store(true, std::memory_order_relaxed);
+    return true;
+}
+
+DWORD WINAPI RawInputMonitorThread(LPVOID) {
+    bool clipCursorHooked = false;
+
+    while (!g_rawInputThreadStop.load(std::memory_order_relaxed)) {
+        HWND gameWindow = FindBestGameWindow();
+        if (gameWindow != nullptr) {
+            g_rawInputGameWindow.store(gameWindow, std::memory_order_relaxed);
+            HookGameWindowProcOnce(gameWindow);
+
+            if (!g_rawInputRegistered.load(std::memory_order_relaxed) && RegisterRawMouseInput(gameWindow)) {
+                g_rawInputRegistered.store(true, std::memory_order_relaxed);
+            }
+
+            if (!clipCursorHooked) {
+                clipCursorHooked = InstallClipCursorIatHook();
+            }
+
+            InstallFixMouseLogicHookOnce();
+        }
+
+        Sleep(200);
+    }
+
+    return 0;
+}
+
+void StartRawInputFix() {
+    g_rawInputThreadStop.store(false, std::memory_order_relaxed);
+    HANDLE thread = CreateThread(nullptr, 0, RawInputMonitorThread, nullptr, 0, nullptr);
+    if (thread != nullptr) {
+        CloseHandle(thread);
+    }
+}
+
 bool BoolFromIni(const wchar_t* path, const wchar_t* key, bool defaultValue) {
     return GetPrivateProfileIntW(L"PatchGroups", key, defaultValue ? 1 : 0, path) != 0;
 }
@@ -234,6 +633,7 @@ PatchConfig LoadPatchConfig() {
     config.dynamicResolution = BoolFromIni(iniPath, L"DynamicResolution", config.dynamicResolution);
     config.mouseCursorFix = BoolFromIni(iniPath, L"MouseCursorFix", config.mouseCursorFix);
     config.clipCursorFix = BoolFromIni(iniPath, L"ClipCursorFix", config.clipCursorFix);
+    config.rawInputFix = BoolFromIni(iniPath, L"RawInputFix", config.rawInputFix);
     config.logAppliedPatches = DebugBoolFromIni(iniPath, L"LogAppliedPatches", config.logAppliedPatches);
     return config;
 }
@@ -251,7 +651,7 @@ void ApplyBhdPatches() {
     }
 
     const bool needsDynamicResolutionCodeCave =
-        config.dynamicResolution || config.mouseCursorFix || config.clipCursorFix;
+        config.dynamicResolution || config.mouseCursorFix || config.clipCursorFix || config.rawInputFix;
     if (!needsDynamicResolutionCodeCave) {
         return;
     }
@@ -263,11 +663,14 @@ void ApplyBhdPatches() {
     if (config.dynamicResolution || config.mouseCursorFix) {
         ApplyPatch(kDynamicResolutionCorePatch);
     }
-    if (config.mouseCursorFix) {
+    if (config.mouseCursorFix || config.rawInputFix) {
         ApplyPatch(kMouseCursorPatch);
     }
     if (config.clipCursorFix) {
         ApplyPatchGroup(kClipCursorPatches);
+    }
+    if (config.rawInputFix) {
+        StartRawInputFix();
     }
 }
 
@@ -340,6 +743,12 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         ApplyBhdPatches();
         LoadRealDInput8();
     } else if (reason == DLL_PROCESS_DETACH) {
+        g_rawInputThreadStop.store(true, std::memory_order_relaxed);
+        if (g_fixMouseTrampoline != nullptr) {
+            VirtualFree(g_fixMouseTrampoline, 0, MEM_RELEASE);
+            g_fixMouseTrampoline = nullptr;
+            g_fixMouseTrampolineFn = nullptr;
+        }
         if (g_realDInput8 != nullptr) {
             FreeLibrary(g_realDInput8);
             g_realDInput8 = nullptr;
