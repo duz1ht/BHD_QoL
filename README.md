@@ -23,6 +23,24 @@ The DLL also installs dynamic-resolution cursor and viewport hooks:
 
 Each patch checks the expected bytes before writing, so unsupported executables are left unchanged.
 
+
+## Runtime configuration
+
+Copy `dinput8.ini` next to `dfbhd.exe` and the compiled `dinput8.dll` to enable or disable patch groups at runtime:
+
+```ini
+[PatchGroups]
+NVGResolution=1
+DynamicResolution=1
+MouseCursorFix=1
+ClipCursorFix=1
+
+[Debug]
+LogAppliedPatches=0
+```
+
+Set a patch group to `1` to enable it or `0` to disable it. If `dinput8.ini` is missing, the DLL uses the same defaults shown above. `LogAppliedPatches=1` writes patch status messages to the debugger through `OutputDebugStringA`.
+
 ## Knowledge_Base policy
 
 The `Knowledge_Base/` directory is a read-only reference area for LLM agents such as Codex. It may contain code, examples, or material extracted from other projects so that maintainers and agents can study that knowledge and use it as a basis for implementing changes in the main project tree.
