@@ -1,0 +1,34 @@
+Client Wait Ticks (Net_ClientTickDelay = %i)
+	Default : 1 (16ms)
+	Min : 1
+	Max : 24
+
+Server Wait Ticks (Net_ServerTickDelay = %i)
+	Default : 1 (16ms)
+	Min : 1
+	Max : 24
+
+Entity Updates Per Tick (Net_EntityUpdatesPerTick = %i)
+	Default : 8
+	Min : 1
+	Max : 64
+
+Master Server Update Rate (Net_MasterServerHeartbeatDelay = %i)
+	Default : 1860 (30s)
+	Min : 930 (15s)
+	Max : 7440 (120s)
+
+Player Stat Update Rate (Net_PlayerStatUpdateDelay = %i)
+	Default : 310 (5s)
+	Min : 62 (1s)
+	Max : 620 (10s)
+		
+Claymore World Limit (Engine_ClaymoreLimit = %i)
+	Default : 2
+	Min : 1
+	Max : 32
+		
+Satchel Charge World Limit (Engine_SatchelChargeLimit = %i)
+	Default : 8
+	Min : 1
+	Max : 32
