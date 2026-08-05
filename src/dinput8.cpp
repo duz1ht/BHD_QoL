@@ -9,7 +9,7 @@ constexpr uintptr_t kImageBase = 0x400000;
 constexpr uintptr_t kPatchAddressMovEax = 0x52A934;
 constexpr uintptr_t kPatchAddressWidthStore = 0x52A94C;
 constexpr uintptr_t kPatchAddressHeightStore = 0x52A956;
-constexpr uintptr_t kPatchAddressLoadingGameDynamicResolution = 0x4BC711;
+constexpr uintptr_t kPatchAddressPollMouseInputCursorPosition = 0x567972;
 constexpr uintptr_t kPatchAddressClipCursorToViewPort = 0x4628D3;
 
 HMODULE g_realDInput8 = nullptr;
@@ -47,14 +47,14 @@ const Patch kPatches[] = {
      10},
 
     // Patch group: Dynamic resolution cursor and viewport support.
-    // These hooks redirect fixed-resolution code paths to code caves that can compute
-    // additional resolution values and apply them to ClipCursor calculations.
-    {"Compute additional dynamic resolution values",
-     "LoadingGame(): MOV DWORD PTR [009FB3D8],EBX -> JMP 005E4879",
-     kPatchAddressLoadingGameDynamicResolution,
-     {0x89, 0x1D, 0xD8, 0xB3, 0x9F, 0x00},
-     {0xE9, 0x63, 0x81, 0x12, 0x00, 0x90},
-     6},
+    // These hooks redirect fixed-resolution code paths to code caves that can apply
+    // dynamic resolution values to cursor positioning and ClipCursor calculations.
+    {"Use dynamic resolution in SetCursorPosition",
+     "PollMouseInput(): ADD EAX,0xF0 -> JMP 005E48C0",
+     kPatchAddressPollMouseInputCursorPosition,
+     {0x05, 0xF0, 0x00, 0x00, 0x00},
+     {0xE9, 0x49, 0xCF, 0x07, 0x00},
+     5},
     {"Use dynamic resolution when clipping cursor to viewport",
      "ClipCursorToViewPort(): MOV DWORD PTR [EBP + -0x8],0x27F -> JMP 005E492B",
      kPatchAddressClipCursorToViewPort,
