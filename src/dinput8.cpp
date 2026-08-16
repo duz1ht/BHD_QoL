@@ -23,6 +23,13 @@ using ClipCursorFn = BOOL(WINAPI*)(const RECT*);
 ClipCursorFn g_originalClipCursor = nullptr;
 RECT g_lastCursorClip = {};
 bool g_hasLastCursorClip = false;
+RECT g_cursorClipVirtualScreen = {};
+RECT g_cursorClipClientRect = {};
+RECT g_cursorClipMonitorRect = {};
+HMONITOR g_cursorClipMonitor = nullptr;
+HWND g_cursorClipWindow = nullptr;
+bool g_hasCursorClipContext = false;
+bool g_cursorClipDisplayChanged = false;
 HWND g_gameWindow = nullptr;
 WNDPROC g_originalGameWindowProc = nullptr;
 
@@ -168,19 +175,113 @@ bool IsValidCursorClip(const RECT* rect) {
     return rect != nullptr && rect->right > rect->left && rect->bottom > rect->top;
 }
 
+RECT GetVirtualScreenRect() {
+    const LONG left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    const LONG top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    return {left, top, left + GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            top + GetSystemMetrics(SM_CYVIRTUALSCREEN)};
+}
+
+bool GetWindowClientScreenRect(HWND window, RECT* rect) {
+    if (rect == nullptr || !GetClientRect(window, rect)) {
+        return false;
+    }
+
+    POINT points[] = {{rect->left, rect->top}, {rect->right, rect->bottom}};
+    SetLastError(ERROR_SUCCESS);
+    if (MapWindowPoints(window, nullptr, points, 2) == 0 && GetLastError() != ERROR_SUCCESS) {
+        return false;
+    }
+
+    *rect = {points[0].x, points[0].y, points[1].x, points[1].y};
+    return IsValidCursorClip(rect);
+}
+
+bool RectsEqual(const RECT& left, const RECT& right) {
+    return left.left == right.left && left.top == right.top && left.right == right.right &&
+           left.bottom == right.bottom;
+}
+
+bool GetMonitorRect(HMONITOR monitor, RECT* rect) {
+    if (monitor == nullptr || rect == nullptr) {
+        return false;
+    }
+
+    MONITORINFO info = {};
+    info.cbSize = sizeof(info);
+    if (!GetMonitorInfoA(monitor, &info)) {
+        return false;
+    }
+
+    *rect = info.rcMonitor;
+    return IsValidCursorClip(rect);
+}
+
+bool IsCursorClipSafeToRestore(HWND gameWindow) {
+    const RECT virtualScreen = GetVirtualScreenRect();
+    RECT clientRect = {};
+    RECT screenIntersection = {};
+    RECT clientIntersection = {};
+    if (!IsValidCursorClip(&virtualScreen) || !GetWindowClientScreenRect(gameWindow, &clientRect) ||
+        !IntersectRect(&screenIntersection, &g_lastCursorClip, &virtualScreen) ||
+        !EqualRect(&screenIntersection, &g_lastCursorClip) ||
+        !IntersectRect(&clientIntersection, &g_lastCursorClip, &clientRect)) {
+        return false;
+    }
+
+    const LONG clipWidth = clientIntersection.right - clientIntersection.left;
+    const LONG clipHeight = clientIntersection.bottom - clientIntersection.top;
+    const LONG clientWidth = clientRect.right - clientRect.left;
+    const LONG clientHeight = clientRect.bottom - clientRect.top;
+    if (clipWidth < clientWidth / 2 || clipHeight < clientHeight / 2) {
+        return false;
+    }
+
+    if (g_cursorClipDisplayChanged) {
+        const HMONITOR currentMonitor = MonitorFromRect(&g_lastCursorClip, MONITOR_DEFAULTTONULL);
+        RECT currentMonitorRect = {};
+        if (!g_hasCursorClipContext || !RectsEqual(virtualScreen, g_cursorClipVirtualScreen) ||
+            !RectsEqual(clientRect, g_cursorClipClientRect) || currentMonitor != g_cursorClipMonitor ||
+            !GetMonitorRect(currentMonitor, &currentMonitorRect) ||
+            !RectsEqual(currentMonitorRect, g_cursorClipMonitorRect)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void ClearSavedCursorClip(const char* reason) {
+    g_hasLastCursorClip = false;
+    g_cursorClipWindow = nullptr;
+    g_cursorClipMonitor = nullptr;
+    g_hasCursorClipContext = false;
+    g_cursorClipDisplayChanged = false;
+    LogPatchMessage("Saved cursor clip", reason);
+}
+
 void RestoreCursorClip(HWND gameWindow) {
     if (g_originalClipCursor != nullptr && g_hasLastCursorClip && gameWindow == g_gameWindow &&
+        gameWindow == g_cursorClipWindow &&
         GetForegroundWindow() == gameWindow && GetFocus() == gameWindow && !IsIconic(gameWindow) &&
-        IsWindowVisible(gameWindow)) {
+        IsWindowVisible(gameWindow) && IsCursorClipSafeToRestore(gameWindow)) {
         g_originalClipCursor(&g_lastCursorClip);
+        g_cursorClipDisplayChanged = false;
+        LogPatchMessage("Restore saved cursor clip", "applied");
+    } else if (g_hasLastCursorClip && gameWindow == g_gameWindow &&
+               gameWindow == g_cursorClipWindow && GetForegroundWindow() == gameWindow &&
+               GetFocus() == gameWindow && !IsIconic(gameWindow) && IsWindowVisible(gameWindow)) {
+        ClearSavedCursorClip("discarded stale or unsafe rectangle");
     }
 }
 
 LRESULT CALLBACK CursorClipRecoveryWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     const WNDPROC originalWindowProc = g_originalGameWindowProc;
 
-    if ((message == WM_ACTIVATEAPP && wParam != FALSE) || message == WM_SETFOCUS ||
-        message == WM_DISPLAYCHANGE) {
+    if (message == WM_DISPLAYCHANGE) {
+        g_cursorClipDisplayChanged = true;
+        SetTimer(window, kCursorClipRecoveryTimer, kCursorClipRecoveryDelayMs, nullptr);
+    } else if ((message == WM_ACTIVATEAPP && wParam != FALSE) || message == WM_SETFOCUS) {
         SetTimer(window, kCursorClipRecoveryTimer, kCursorClipRecoveryDelayMs, nullptr);
     } else if (message == WM_TIMER && wParam == kCursorClipRecoveryTimer) {
         KillTimer(window, kCursorClipRecoveryTimer);
@@ -221,13 +322,25 @@ void AttachCursorClipRecoveryToWindow() {
 }
 
 BOOL WINAPI HookClipCursor(const RECT* rect) {
-    if (IsValidCursorClip(rect)) {
+    const BOOL result = g_originalClipCursor != nullptr ? g_originalClipCursor(rect) : FALSE;
+
+    if (rect == nullptr) {
+        ClearSavedCursorClip("released by game");
+    } else if (result != FALSE && IsValidCursorClip(rect)) {
+        AttachCursorClipRecoveryToWindow();
         g_lastCursorClip = *rect;
         g_hasLastCursorClip = true;
-        AttachCursorClipRecoveryToWindow();
+        g_cursorClipVirtualScreen = GetVirtualScreenRect();
+        g_cursorClipMonitor = MonitorFromRect(rect, MONITOR_DEFAULTTONULL);
+        g_cursorClipWindow = g_gameWindow;
+        g_hasCursorClipContext =
+            g_cursorClipWindow != nullptr &&
+            GetWindowClientScreenRect(g_cursorClipWindow, &g_cursorClipClientRect) &&
+            GetMonitorRect(g_cursorClipMonitor, &g_cursorClipMonitorRect);
+        g_cursorClipDisplayChanged = false;
     }
 
-    return g_originalClipCursor != nullptr ? g_originalClipCursor(rect) : FALSE;
+    return result;
 }
 
 bool InstallCursorClipRecoveryHook() {

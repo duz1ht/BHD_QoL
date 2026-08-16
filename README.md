@@ -27,7 +27,10 @@ The DLL also hooks the game's `ClipCursor` import and remembers its most recent 
 rectangle. After the game regains focus (including after a fullscreen display-mode change), a short
 deferred window-message callback restores that rectangle when the game is foreground, focused,
 visible, and not minimized. This prevents the game from remaining in its inactive-performance state
-after Alt-Tab.
+after Alt-Tab. Explicit `ClipCursor(nullptr)` calls invalidate the saved rectangle, and rectangles
+captured before a display-mode change are restored only when they still match the current virtual
+screen, monitor, and game-window client area. This prevents stale clipping bounds from trapping the
+cursor after a resolution change or map load.
 
 
 ## Runtime configuration
