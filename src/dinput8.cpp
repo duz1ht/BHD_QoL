@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "cursor_clip_recovery.h"
+
 namespace {
 constexpr uintptr_t kImageBase = 0x400000;
 constexpr uintptr_t kPatchAddressMovEax = 0x52A934;
@@ -23,6 +25,9 @@ struct PatchConfig {
     bool dynamicResolution = true;
     bool mouseCursorFix = true;
     bool clipCursorFix = true;
+    bool restoreCursorClip = true;
+    bool waitForDisplayChange = true;
+    UINT restoreCursorClipDelayMs = 250;
     bool logAppliedPatches = false;
 };
 
@@ -213,6 +218,10 @@ bool DebugBoolFromIni(const wchar_t* path, const wchar_t* key, bool defaultValue
     return GetPrivateProfileIntW(L"Debug", key, defaultValue ? 1 : 0, path) != 0;
 }
 
+bool RecoveryBoolFromIni(const wchar_t* path, const wchar_t* key, bool defaultValue) {
+    return GetPrivateProfileIntW(L"Recovery", key, defaultValue ? 1 : 0, path) != 0;
+}
+
 void BuildIniPath(wchar_t* iniPath, DWORD size) {
     iniPath[0] = L'\0';
     const DWORD length = GetModuleFileNameW(nullptr, iniPath, size);
@@ -234,8 +243,26 @@ PatchConfig LoadPatchConfig() {
     config.dynamicResolution = BoolFromIni(iniPath, L"DynamicResolution", config.dynamicResolution);
     config.mouseCursorFix = BoolFromIni(iniPath, L"MouseCursorFix", config.mouseCursorFix);
     config.clipCursorFix = BoolFromIni(iniPath, L"ClipCursorFix", config.clipCursorFix);
+    config.restoreCursorClip = RecoveryBoolFromIni(
+        iniPath, L"RestoreCursorClip", config.restoreCursorClip);
+    config.waitForDisplayChange = RecoveryBoolFromIni(
+        iniPath, L"WaitForDisplayChange", config.waitForDisplayChange);
+    const UINT delay = GetPrivateProfileIntW(
+        L"Recovery", L"RestoreCursorClipDelayMs", config.restoreCursorClipDelayMs, iniPath);
+    config.restoreCursorClipDelayMs = delay < 1 ? 1 : (delay > 10000 ? 10000 : delay);
     config.logAppliedPatches = DebugBoolFromIni(iniPath, L"LogAppliedPatches", config.logAppliedPatches);
     return config;
+}
+
+DWORD WINAPI InstallCursorClipRecovery(void*) {
+    const PatchConfig config = LoadPatchConfig();
+    const cursor_clip_recovery::Settings settings{
+        config.restoreCursorClip,
+        config.waitForDisplayChange,
+        config.restoreCursorClipDelayMs,
+    };
+    cursor_clip_recovery::Install(settings);
+    return 0;
 }
 
 void ApplyBhdPatches() {
@@ -339,7 +366,10 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         DisableThreadLibraryCalls(module);
         ApplyBhdPatches();
         LoadRealDInput8();
+        HANDLE thread = CreateThread(nullptr, 0, InstallCursorClipRecovery, nullptr, 0, nullptr);
+        if (thread) CloseHandle(thread);
     } else if (reason == DLL_PROCESS_DETACH) {
+        cursor_clip_recovery::Remove();
         if (g_realDInput8 != nullptr) {
             FreeLibrary(g_realDInput8);
             g_realDInput8 = nullptr;

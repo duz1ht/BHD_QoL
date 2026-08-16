@@ -41,6 +41,17 @@ LogAppliedPatches=0
 
 Set a patch group to `1` to enable it or `0` to disable it. If `dinput8.ini` is missing, the DLL uses the same defaults shown above. `LogAppliedPatches=1` writes patch status messages to the debugger through `OutputDebugStringA`.
 
+The cursor clip can also be restored after the game regains focus:
+
+```ini
+[Recovery]
+RestoreCursorClip=1
+RestoreCursorClipDelayMs=250
+WaitForDisplayChange=1
+```
+
+`RestoreCursorClip` remembers the last clipping rectangle successfully applied by the game and reapplies it after focus returns. `RestoreCursorClipDelayMs` is clamped to 1–10000 ms. With `WaitForDisplayChange=1`, recovery prefers a matching display-change notification and otherwise uses a two-second fallback. This is independent from `ClipCursorFix`: the patch fixes the calculated rectangle, while recovery restores the last observed rectangle.
+
 ## Knowledge_Base policy
 
 The `Knowledge_Base/` directory is a read-only reference area for LLM agents such as Codex. It may contain code, examples, or material extracted from other projects so that maintainers and agents can study that knowledge and use it as a basis for implementing changes in the main project tree.
