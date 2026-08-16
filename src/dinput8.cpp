@@ -14,15 +14,24 @@ constexpr uintptr_t kPatchAddressPollMouseInputCursorPosition = 0x567972;
 constexpr uintptr_t kPatchAddressInitializeInGameSystemsClipCursor = 0x4623D2;
 constexpr uintptr_t kPatchAddressClipCursorToViewPort = 0x4628D3;
 constexpr uintptr_t kDynamicResolutionCodeCave = 0x5E4879;
+constexpr UINT_PTR kCursorClipRecoveryTimer = 0x42484451;
+constexpr UINT kCursorClipRecoveryDelayMs = 100;
 
 HMODULE g_realDInput8 = nullptr;
 bool g_logAppliedPatches = false;
+using ClipCursorFn = BOOL(WINAPI*)(const RECT*);
+ClipCursorFn g_originalClipCursor = nullptr;
+RECT g_lastCursorClip = {};
+bool g_hasLastCursorClip = false;
+HWND g_gameWindow = nullptr;
+WNDPROC g_originalGameWindowProc = nullptr;
 
 struct PatchConfig {
     bool nvgResolution = true;
     bool dynamicResolution = true;
     bool mouseCursorFix = true;
     bool clipCursorFix = true;
+    bool cursorClipRecovery = true;
     bool logAppliedPatches = false;
 };
 
@@ -155,6 +164,128 @@ void LogPatchMessage(const char* title, const char* status) {
     OutputDebugStringA(message);
 }
 
+bool IsValidCursorClip(const RECT* rect) {
+    return rect != nullptr && rect->right > rect->left && rect->bottom > rect->top;
+}
+
+void RestoreCursorClip(HWND gameWindow) {
+    if (g_originalClipCursor != nullptr && g_hasLastCursorClip && gameWindow == g_gameWindow &&
+        GetForegroundWindow() == gameWindow && GetFocus() == gameWindow && !IsIconic(gameWindow) &&
+        IsWindowVisible(gameWindow)) {
+        g_originalClipCursor(&g_lastCursorClip);
+    }
+}
+
+LRESULT CALLBACK CursorClipRecoveryWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    const WNDPROC originalWindowProc = g_originalGameWindowProc;
+
+    if ((message == WM_ACTIVATEAPP && wParam != FALSE) || message == WM_SETFOCUS ||
+        message == WM_DISPLAYCHANGE) {
+        SetTimer(window, kCursorClipRecoveryTimer, kCursorClipRecoveryDelayMs, nullptr);
+    } else if (message == WM_TIMER && wParam == kCursorClipRecoveryTimer) {
+        KillTimer(window, kCursorClipRecoveryTimer);
+        RestoreCursorClip(window);
+    } else if (message == WM_NCDESTROY && window == g_gameWindow) {
+        KillTimer(window, kCursorClipRecoveryTimer);
+        SetWindowLongPtrA(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(originalWindowProc));
+        g_gameWindow = nullptr;
+        g_originalGameWindowProc = nullptr;
+    }
+
+    return originalWindowProc != nullptr
+               ? CallWindowProcA(originalWindowProc, window, message, wParam, lParam)
+               : DefWindowProcA(window, message, wParam, lParam);
+}
+
+void AttachCursorClipRecoveryToWindow() {
+    HWND window = GetFocus();
+    if (window == nullptr) {
+        window = GetForegroundWindow();
+    }
+    if (window == nullptr || g_gameWindow != nullptr ||
+        GetWindowThreadProcessId(window, nullptr) != GetCurrentThreadId()) {
+        return;
+    }
+
+    SetLastError(ERROR_SUCCESS);
+    const LONG_PTR previous =
+        SetWindowLongPtrA(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(CursorClipRecoveryWindowProc));
+    if (previous == 0 && GetLastError() != ERROR_SUCCESS) {
+        LogPatchMessage("Install cursor clip recovery window hook", "failed SetWindowLongPtr");
+        return;
+    }
+
+    g_gameWindow = window;
+    g_originalGameWindowProc = reinterpret_cast<WNDPROC>(previous);
+    LogPatchMessage("Install cursor clip recovery window hook", "applied");
+}
+
+BOOL WINAPI HookClipCursor(const RECT* rect) {
+    if (IsValidCursorClip(rect)) {
+        g_lastCursorClip = *rect;
+        g_hasLastCursorClip = true;
+        AttachCursorClipRecoveryToWindow();
+    }
+
+    return g_originalClipCursor != nullptr ? g_originalClipCursor(rect) : FALSE;
+}
+
+bool InstallCursorClipRecoveryHook() {
+    HMODULE executable = GetModuleHandleW(nullptr);
+    auto* base = reinterpret_cast<unsigned char*>(executable);
+    auto* dosHeader = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+    if (dosHeader == nullptr || dosHeader->e_magic != IMAGE_DOS_SIGNATURE) {
+        return false;
+    }
+
+    auto* ntHeaders = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dosHeader->e_lfanew);
+    if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) {
+        return false;
+    }
+
+    const IMAGE_DATA_DIRECTORY& imports =
+        ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (imports.VirtualAddress == 0) {
+        return false;
+    }
+
+    auto* descriptor = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(base + imports.VirtualAddress);
+    for (; descriptor->Name != 0; ++descriptor) {
+        if (descriptor->OriginalFirstThunk == 0 || descriptor->FirstThunk == 0) {
+            continue;
+        }
+
+        auto* names = reinterpret_cast<IMAGE_THUNK_DATA*>(base + descriptor->OriginalFirstThunk);
+        auto* functions = reinterpret_cast<IMAGE_THUNK_DATA*>(base + descriptor->FirstThunk);
+        for (; names->u1.AddressOfData != 0; ++names, ++functions) {
+            if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal)) {
+                continue;
+            }
+            auto* import = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base + names->u1.AddressOfData);
+            if (lstrcmpA(reinterpret_cast<const char*>(import->Name), "ClipCursor") != 0) {
+                continue;
+            }
+
+            auto* slot = reinterpret_cast<ULONG_PTR*>(&functions->u1.Function);
+            g_originalClipCursor = reinterpret_cast<ClipCursorFn>(*slot);
+            DWORD oldProtect = 0;
+            if (!VirtualProtect(slot, sizeof(*slot), PAGE_READWRITE, &oldProtect)) {
+                g_originalClipCursor = nullptr;
+                return false;
+            }
+            *slot = reinterpret_cast<ULONG_PTR>(HookClipCursor);
+            DWORD ignored = 0;
+            VirtualProtect(slot, sizeof(*slot), oldProtect, &ignored);
+            FlushInstructionCache(GetCurrentProcess(), slot, sizeof(*slot));
+            LogPatchMessage("Install cursor clip recovery API hook", "applied");
+            return true;
+        }
+    }
+
+    LogPatchMessage("Install cursor clip recovery API hook", "ClipCursor import not found");
+    return false;
+}
+
 bool WriteBytes(uintptr_t virtualAddress, ByteSpan replacement) {
     auto* address = reinterpret_cast<unsigned char*>(virtualAddress);
 
@@ -234,6 +365,8 @@ PatchConfig LoadPatchConfig() {
     config.dynamicResolution = BoolFromIni(iniPath, L"DynamicResolution", config.dynamicResolution);
     config.mouseCursorFix = BoolFromIni(iniPath, L"MouseCursorFix", config.mouseCursorFix);
     config.clipCursorFix = BoolFromIni(iniPath, L"ClipCursorFix", config.clipCursorFix);
+    config.cursorClipRecovery =
+        BoolFromIni(iniPath, L"CursorClipRecovery", config.cursorClipRecovery);
     config.logAppliedPatches = DebugBoolFromIni(iniPath, L"LogAppliedPatches", config.logAppliedPatches);
     return config;
 }
@@ -245,6 +378,10 @@ void ApplyBhdPatches() {
 
     const PatchConfig config = LoadPatchConfig();
     g_logAppliedPatches = config.logAppliedPatches;
+
+    if (config.cursorClipRecovery) {
+        InstallCursorClipRecoveryHook();
+    }
 
     if (config.nvgResolution) {
         ApplyPatchGroup(kNvgPatches);

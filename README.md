@@ -23,6 +23,12 @@ The DLL also installs dynamic-resolution cursor and viewport hooks:
 
 Each patch checks the expected bytes before writing, so unsupported executables are left unchanged.
 
+The DLL also hooks the game's `ClipCursor` import and remembers its most recent valid clipping
+rectangle. After the game regains focus (including after a fullscreen display-mode change), a short
+deferred window-message callback restores that rectangle when the game is foreground, focused,
+visible, and not minimized. This prevents the game from remaining in its inactive-performance state
+after Alt-Tab.
+
 
 ## Runtime configuration
 
@@ -34,12 +40,16 @@ NVGResolution=1
 DynamicResolution=1
 MouseCursorFix=1
 ClipCursorFix=1
+CursorClipRecovery=1
 
 [Debug]
 LogAppliedPatches=0
 ```
 
-Set a patch group to `1` to enable it or `0` to disable it. If `dinput8.ini` is missing, the DLL uses the same defaults shown above. `LogAppliedPatches=1` writes patch status messages to the debugger through `OutputDebugStringA`.
+Set a patch group to `1` to enable it or `0` to disable it. `CursorClipRecovery` controls the
+Alt-Tab recovery hook independently of the dynamic-resolution `ClipCursorFix`. If `dinput8.ini` is
+missing, the DLL uses the same defaults shown above. `LogAppliedPatches=1` writes patch status
+messages to the debugger through `OutputDebugStringA`.
 
 ## Knowledge_Base policy
 
