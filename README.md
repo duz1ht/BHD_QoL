@@ -52,7 +52,12 @@ LogAppliedPatches=0
 Set a patch group to `1` to enable it or `0` to disable it. `CursorClipRecovery` controls the
 Alt-Tab recovery hook independently of the dynamic-resolution `ClipCursorFix`. If `dinput8.ini` is
 missing, the DLL uses the same defaults shown above. `LogAppliedPatches=1` writes patch status
-messages to the debugger through `OutputDebugStringA`.
+messages to the debugger through `OutputDebugStringA`. It also enables cursor-recovery telemetry
+covering every `ClipCursor` request, focus/display messages, saved and current window/monitor
+geometry, calls received after a display change, and the exact reason a restoration was applied or
+discarded. Capture these messages with a debugger or a tool such as DebugView while reproducing an
+Alt-Tab or monitor change; lines are prefixed with `BHD_QoL: CursorClip` or
+`BHD_QoL: CursorClipRecovery`.
 
 ## Knowledge_Base policy
 

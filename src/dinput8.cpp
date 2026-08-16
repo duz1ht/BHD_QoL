@@ -30,6 +30,11 @@ HMONITOR g_cursorClipMonitor = nullptr;
 HWND g_cursorClipWindow = nullptr;
 bool g_hasCursorClipContext = false;
 bool g_cursorClipDisplayChanged = false;
+bool g_hasObservedDisplayChange = false;
+DWORD g_cursorClipCallSequence = 0;
+DWORD g_validCursorClipSequence = 0;
+DWORD g_displayChangeClipCallSequence = 0;
+DWORD g_displayChangeValidClipSequence = 0;
 HWND g_gameWindow = nullptr;
 WNDPROC g_originalGameWindowProc = nullptr;
 
@@ -217,15 +222,119 @@ bool GetMonitorRect(HMONITOR monitor, RECT* rect) {
     return IsValidCursorClip(rect);
 }
 
-bool IsCursorClipSafeToRestore(HWND gameWindow) {
+void LogCursorClipRect(const char* event, const RECT* rect) {
+    if (!g_logAppliedPatches) {
+        return;
+    }
+
+    char message[512] = {};
+    if (rect == nullptr) {
+        wsprintfA(message, "BHD_QoL: CursorClip: %s: rect=null sequence=%lu validSequence=%lu\n",
+                  event, g_cursorClipCallSequence, g_validCursorClipSequence);
+    } else {
+        wsprintfA(message,
+                  "BHD_QoL: CursorClip: %s: rect=(%ld,%ld)-(%ld,%ld) size=%ldx%ld "
+                  "sequence=%lu validSequence=%lu\n",
+                  event, rect->left, rect->top, rect->right, rect->bottom,
+                  rect->right - rect->left, rect->bottom - rect->top, g_cursorClipCallSequence,
+                  g_validCursorClipSequence);
+    }
+    OutputDebugStringA(message);
+}
+
+void LogCursorClipContext(const char* event, HWND window, HMONITOR monitor, const RECT& virtualScreen,
+                          const RECT& clientRect, const RECT& monitorRect) {
+    if (!g_logAppliedPatches) {
+        return;
+    }
+
+    char message[768] = {};
+    wsprintfA(
+        message,
+        "BHD_QoL: CursorClip: %s: window=0x%08lX monitor=0x%08lX "
+        "virtual=(%ld,%ld)-(%ld,%ld) client=(%ld,%ld)-(%ld,%ld) "
+        "monitorRect=(%ld,%ld)-(%ld,%ld)\n",
+        event, static_cast<unsigned long>(reinterpret_cast<uintptr_t>(window)),
+        static_cast<unsigned long>(reinterpret_cast<uintptr_t>(monitor)), virtualScreen.left,
+        virtualScreen.top, virtualScreen.right, virtualScreen.bottom, clientRect.left, clientRect.top,
+        clientRect.right, clientRect.bottom, monitorRect.left, monitorRect.top, monitorRect.right,
+        monitorRect.bottom);
+    OutputDebugStringA(message);
+}
+
+void LogCursorRecoveryEvent(const char* event, HWND window, const char* detail) {
+    if (!g_logAppliedPatches) {
+        return;
+    }
+
+    char message[512] = {};
+    wsprintfA(message,
+              "BHD_QoL: CursorClipRecovery: %s: %s window=0x%08lX displayChanged=%d "
+              "callsSinceDisplay=%lu validClipsSinceDisplay=%lu tick=%lu\n",
+              event, detail, static_cast<unsigned long>(reinterpret_cast<uintptr_t>(window)),
+              g_cursorClipDisplayChanged ? 1 : 0,
+              g_cursorClipCallSequence - g_displayChangeClipCallSequence,
+              g_validCursorClipSequence - g_displayChangeValidClipSequence, GetTickCount());
+    OutputDebugStringA(message);
+}
+
+void LogCursorWindowMessage(const char* name, HWND window, WPARAM wParam, LPARAM lParam) {
+    if (!g_logAppliedPatches) {
+        return;
+    }
+
+    char message[512] = {};
+    wsprintfA(message,
+              "BHD_QoL: CursorClipRecovery: message=%s window=0x%08lX wParam=0x%08lX "
+              "lParam=0x%08lX tick=%lu\n",
+              name, static_cast<unsigned long>(reinterpret_cast<uintptr_t>(window)),
+              static_cast<unsigned long>(wParam), static_cast<unsigned long>(lParam), GetTickCount());
+    OutputDebugStringA(message);
+}
+
+void LogCursorContextComparison(HWND window, HMONITOR currentMonitor, const RECT& currentVirtualScreen,
+                                const RECT& currentClientRect, const RECT& currentMonitorRect) {
+    if (!g_logAppliedPatches) {
+        return;
+    }
+
+    char message[512] = {};
+    wsprintfA(message,
+              "BHD_QoL: CursorClipRecovery: context comparison windowChanged=%d monitorChanged=%d "
+              "virtualChanged=%d clientChanged=%d monitorGeometryChanged=%d "
+              "newValidClipSinceDisplay=%d\n",
+              window != g_cursorClipWindow ? 1 : 0, currentMonitor != g_cursorClipMonitor ? 1 : 0,
+              !RectsEqual(currentVirtualScreen, g_cursorClipVirtualScreen) ? 1 : 0,
+              !RectsEqual(currentClientRect, g_cursorClipClientRect) ? 1 : 0,
+              !RectsEqual(currentMonitorRect, g_cursorClipMonitorRect) ? 1 : 0,
+              g_hasObservedDisplayChange &&
+                      g_validCursorClipSequence != g_displayChangeValidClipSequence
+                  ? 1
+                  : 0);
+    OutputDebugStringA(message);
+}
+
+bool IsCursorClipSafeToRestore(HWND gameWindow, const char** rejectionReason) {
+    *rejectionReason = "safe";
     const RECT virtualScreen = GetVirtualScreenRect();
     RECT clientRect = {};
     RECT screenIntersection = {};
     RECT clientIntersection = {};
-    if (!IsValidCursorClip(&virtualScreen) || !GetWindowClientScreenRect(gameWindow, &clientRect) ||
-        !IntersectRect(&screenIntersection, &g_lastCursorClip, &virtualScreen) ||
-        !EqualRect(&screenIntersection, &g_lastCursorClip) ||
-        !IntersectRect(&clientIntersection, &g_lastCursorClip, &clientRect)) {
+    if (!IsValidCursorClip(&virtualScreen)) {
+        *rejectionReason = "invalid current virtual screen";
+        return false;
+    }
+    if (!GetWindowClientScreenRect(gameWindow, &clientRect)) {
+        *rejectionReason = "invalid current client area";
+        return false;
+    }
+    if (!IntersectRect(&screenIntersection, &g_lastCursorClip, &virtualScreen) ||
+        !EqualRect(&screenIntersection, &g_lastCursorClip)) {
+        *rejectionReason = "saved rectangle is outside virtual screen";
+        return false;
+    }
+    if (!IntersectRect(&clientIntersection, &g_lastCursorClip, &clientRect)) {
+        *rejectionReason = "saved rectangle does not intersect client area";
         return false;
     }
 
@@ -234,16 +343,35 @@ bool IsCursorClipSafeToRestore(HWND gameWindow) {
     const LONG clientWidth = clientRect.right - clientRect.left;
     const LONG clientHeight = clientRect.bottom - clientRect.top;
     if (clipWidth < clientWidth / 2 || clipHeight < clientHeight / 2) {
+        *rejectionReason = "saved rectangle covers less than half the client area";
         return false;
     }
 
     if (g_cursorClipDisplayChanged) {
         const HMONITOR currentMonitor = MonitorFromRect(&g_lastCursorClip, MONITOR_DEFAULTTONULL);
         RECT currentMonitorRect = {};
-        if (!g_hasCursorClipContext || !RectsEqual(virtualScreen, g_cursorClipVirtualScreen) ||
-            !RectsEqual(clientRect, g_cursorClipClientRect) || currentMonitor != g_cursorClipMonitor ||
-            !GetMonitorRect(currentMonitor, &currentMonitorRect) ||
-            !RectsEqual(currentMonitorRect, g_cursorClipMonitorRect)) {
+        if (!g_hasCursorClipContext) {
+            *rejectionReason = "display changed without captured clip context";
+            return false;
+        }
+        if (!RectsEqual(virtualScreen, g_cursorClipVirtualScreen)) {
+            *rejectionReason = "virtual screen changed without a new valid ClipCursor call";
+            return false;
+        }
+        if (!RectsEqual(clientRect, g_cursorClipClientRect)) {
+            *rejectionReason = "client area changed without a new valid ClipCursor call";
+            return false;
+        }
+        if (currentMonitor != g_cursorClipMonitor) {
+            *rejectionReason = "monitor changed without a new valid ClipCursor call";
+            return false;
+        }
+        if (!GetMonitorRect(currentMonitor, &currentMonitorRect)) {
+            *rejectionReason = "current monitor rectangle unavailable";
+            return false;
+        }
+        if (!RectsEqual(currentMonitorRect, g_cursorClipMonitorRect)) {
+            *rejectionReason = "monitor geometry changed without a new valid ClipCursor call";
             return false;
         }
     }
@@ -261,17 +389,38 @@ void ClearSavedCursorClip(const char* reason) {
 }
 
 void RestoreCursorClip(HWND gameWindow) {
-    if (g_originalClipCursor != nullptr && g_hasLastCursorClip && gameWindow == g_gameWindow &&
-        gameWindow == g_cursorClipWindow &&
-        GetForegroundWindow() == gameWindow && GetFocus() == gameWindow && !IsIconic(gameWindow) &&
-        IsWindowVisible(gameWindow) && IsCursorClipSafeToRestore(gameWindow)) {
-        g_originalClipCursor(&g_lastCursorClip);
+    const char* rejectionReason = "window state is not eligible";
+    const bool eligibleWindow =
+        g_originalClipCursor != nullptr && g_hasLastCursorClip && gameWindow == g_gameWindow &&
+        gameWindow == g_cursorClipWindow && GetForegroundWindow() == gameWindow &&
+        GetFocus() == gameWindow && !IsIconic(gameWindow) && IsWindowVisible(gameWindow);
+    const bool safeToRestore =
+        eligibleWindow && IsCursorClipSafeToRestore(gameWindow, &rejectionReason);
+
+    if (g_logAppliedPatches) {
+        RECT currentClientRect = {};
+        RECT currentMonitorRect = {};
+        const RECT currentVirtualScreen = GetVirtualScreenRect();
+        const HMONITOR currentMonitor = MonitorFromWindow(gameWindow, MONITOR_DEFAULTTONULL);
+        GetWindowClientScreenRect(gameWindow, &currentClientRect);
+        GetMonitorRect(currentMonitor, &currentMonitorRect);
+        LogCursorClipContext("restore current context", gameWindow, currentMonitor,
+                             currentVirtualScreen, currentClientRect, currentMonitorRect);
+        LogCursorContextComparison(gameWindow, currentMonitor, currentVirtualScreen,
+                                   currentClientRect, currentMonitorRect);
+    }
+
+    if (safeToRestore) {
+        const BOOL result = g_originalClipCursor(&g_lastCursorClip);
         g_cursorClipDisplayChanged = false;
-        LogPatchMessage("Restore saved cursor clip", "applied");
-    } else if (g_hasLastCursorClip && gameWindow == g_gameWindow &&
-               gameWindow == g_cursorClipWindow && GetForegroundWindow() == gameWindow &&
-               GetFocus() == gameWindow && !IsIconic(gameWindow) && IsWindowVisible(gameWindow)) {
-        ClearSavedCursorClip("discarded stale or unsafe rectangle");
+        LogCursorClipRect(result != FALSE ? "restore succeeded" : "restore failed", &g_lastCursorClip);
+        LogCursorRecoveryEvent("restore", gameWindow,
+                               result != FALSE ? "saved rectangle applied" : "ClipCursor returned false");
+    } else {
+        LogCursorRecoveryEvent("restore skipped", gameWindow, rejectionReason);
+        if (eligibleWindow) {
+            ClearSavedCursorClip(rejectionReason);
+        }
     }
 }
 
@@ -279,14 +428,25 @@ LRESULT CALLBACK CursorClipRecoveryWindowProc(HWND window, UINT message, WPARAM 
     const WNDPROC originalWindowProc = g_originalGameWindowProc;
 
     if (message == WM_DISPLAYCHANGE) {
+        LogCursorWindowMessage("WM_DISPLAYCHANGE", window, wParam, lParam);
         g_cursorClipDisplayChanged = true;
+        g_hasObservedDisplayChange = true;
+        g_displayChangeClipCallSequence = g_cursorClipCallSequence;
+        g_displayChangeValidClipSequence = g_validCursorClipSequence;
         SetTimer(window, kCursorClipRecoveryTimer, kCursorClipRecoveryDelayMs, nullptr);
     } else if ((message == WM_ACTIVATEAPP && wParam != FALSE) || message == WM_SETFOCUS) {
+        LogCursorWindowMessage(message == WM_ACTIVATEAPP ? "WM_ACTIVATEAPP(TRUE)" : "WM_SETFOCUS",
+                               window, wParam, lParam);
         SetTimer(window, kCursorClipRecoveryTimer, kCursorClipRecoveryDelayMs, nullptr);
     } else if (message == WM_TIMER && wParam == kCursorClipRecoveryTimer) {
+        LogCursorWindowMessage("WM_TIMER(recovery)", window, wParam, lParam);
         KillTimer(window, kCursorClipRecoveryTimer);
         RestoreCursorClip(window);
+    } else if (message == WM_ACTIVATEAPP || message == WM_KILLFOCUS) {
+        LogCursorWindowMessage(message == WM_ACTIVATEAPP ? "WM_ACTIVATEAPP(FALSE)" : "WM_KILLFOCUS",
+                               window, wParam, lParam);
     } else if (message == WM_NCDESTROY && window == g_gameWindow) {
+        LogCursorWindowMessage("WM_NCDESTROY", window, wParam, lParam);
         KillTimer(window, kCursorClipRecoveryTimer);
         SetWindowLongPtrA(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(originalWindowProc));
         g_gameWindow = nullptr;
@@ -322,11 +482,14 @@ void AttachCursorClipRecoveryToWindow() {
 }
 
 BOOL WINAPI HookClipCursor(const RECT* rect) {
+    ++g_cursorClipCallSequence;
     const BOOL result = g_originalClipCursor != nullptr ? g_originalClipCursor(rect) : FALSE;
 
     if (rect == nullptr) {
+        LogCursorClipRect(result != FALSE ? "explicit release succeeded" : "explicit release failed", rect);
         ClearSavedCursorClip("released by game");
     } else if (result != FALSE && IsValidCursorClip(rect)) {
+        ++g_validCursorClipSequence;
         AttachCursorClipRecoveryToWindow();
         g_lastCursorClip = *rect;
         g_hasLastCursorClip = true;
@@ -338,6 +501,12 @@ BOOL WINAPI HookClipCursor(const RECT* rect) {
             GetWindowClientScreenRect(g_cursorClipWindow, &g_cursorClipClientRect) &&
             GetMonitorRect(g_cursorClipMonitor, &g_cursorClipMonitorRect);
         g_cursorClipDisplayChanged = false;
+        LogCursorClipRect("valid request captured", rect);
+        LogCursorClipContext("captured context", g_cursorClipWindow, g_cursorClipMonitor,
+                             g_cursorClipVirtualScreen, g_cursorClipClientRect,
+                             g_cursorClipMonitorRect);
+    } else {
+        LogCursorClipRect(result == FALSE ? "request failed" : "invalid rectangle ignored", rect);
     }
 
     return result;
