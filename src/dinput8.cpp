@@ -19,7 +19,6 @@ constexpr uintptr_t kDynamicResolutionCodeCave = 0x5E4879;
 
 HMODULE g_realDInput8 = nullptr;
 HANDLE g_recoveryStopEvent = nullptr;
-HANDLE g_recoveryThread = nullptr;
 bool g_logAppliedPatches = false;
 
 struct PatchConfig {
@@ -271,25 +270,13 @@ void StartCursorClipRecovery() {
     g_recoveryStopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!g_recoveryStopEvent) return;
 
-    g_recoveryThread = CreateThread(nullptr, 0, InstallCursorClipRecovery, nullptr, 0, nullptr);
-    if (!g_recoveryThread) {
+    HANDLE thread = CreateThread(nullptr, 0, InstallCursorClipRecovery, nullptr, 0, nullptr);
+    if (!thread) {
         CloseHandle(g_recoveryStopEvent);
         g_recoveryStopEvent = nullptr;
+        return;
     }
-}
-
-void StopCursorClipRecovery() {
-    if (g_recoveryStopEvent) SetEvent(g_recoveryStopEvent);
-    if (g_recoveryThread) {
-        WaitForSingleObject(g_recoveryThread, INFINITE);
-        CloseHandle(g_recoveryThread);
-        g_recoveryThread = nullptr;
-    }
-    cursor_clip_recovery::Remove();
-    if (g_recoveryStopEvent) {
-        CloseHandle(g_recoveryStopEvent);
-        g_recoveryStopEvent = nullptr;
-    }
+    CloseHandle(thread);
 }
 
 void ApplyBhdPatches() {
@@ -388,19 +375,16 @@ extern "C" HRESULT WINAPI DllUnregisterServer() {
     return real != nullptr ? real() : E_FAIL;
 }
 
-BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
+BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(module);
         ApplyBhdPatches();
         LoadRealDInput8();
         StartCursorClipRecovery();
     } else if (reason == DLL_PROCESS_DETACH) {
-        if (reserved == nullptr) StopCursorClipRecovery();
-        else if (g_recoveryStopEvent) SetEvent(g_recoveryStopEvent);
-        if (reserved == nullptr && g_realDInput8 != nullptr) {
-            FreeLibrary(g_realDInput8);
-            g_realDInput8 = nullptr;
-        }
+        // The proxy and its hooks live for the process lifetime. Do not wait for
+        // the installer or remove hooks while the Windows loader lock is held.
+        if (g_recoveryStopEvent) SetEvent(g_recoveryStopEvent);
     }
     return TRUE;
 }
