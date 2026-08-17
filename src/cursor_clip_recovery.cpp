@@ -14,6 +14,7 @@ struct RecoveryState {
     std::atomic<bool> clipActive{false};
     std::atomic<bool> clipObserved{false};
     std::atomic<bool> recovering{false};
+    std::atomic<bool> focusReturned{false};
     std::atomic<bool> restoreExpected{false};
     std::atomic<bool> clipAppliedByUs{false};
     std::atomic<LONG> left{0};
@@ -115,6 +116,7 @@ void CancelRecovery(bool releaseOurClip) {
 void BeginFocusLoss() {
     if (!g_state.recovering) {
         g_state.restoreExpected = g_state.clipObserved && g_state.clipActive;
+        g_state.focusReturned = false;
         g_state.displayWidth = static_cast<UINT>(GetSystemMetrics(SM_CXSCREEN));
         g_state.displayHeight = static_cast<UINT>(GetSystemMetrics(SM_CYSCREEN));
     }
@@ -130,10 +132,18 @@ void ArmRecovery(bool displayConfirmed) {
     SetTimer(g_window, kRecoveryTimer, delay, nullptr);
 }
 
+void FocusReturned() {
+    if (!g_state.recovering) return;
+    g_state.focusReturned = true;
+    ArmRecovery(false);
+}
+
 void ApplyRecovery() {
-    if (!g_state.recovering.exchange(false) || !g_state.restoreExpected || !g_clipCursor) return;
+    if (!g_state.recovering || !g_state.restoreExpected || !g_clipCursor) return;
     if (GetForegroundWindow() != g_window || GetFocus() != g_window ||
         IsIconic(g_window) || !IsWindowVisible(g_window)) return;
+
+    g_state.recovering = false;
 
     const RECT expected = ExpectedClip();
     RECT before{};
@@ -149,22 +159,21 @@ LRESULT CALLBACK RecoveryWndProc(HWND window, UINT message, WPARAM wParam, LPARA
     switch (message) {
         case WM_ACTIVATE:
             if (LOWORD(wParam) == WA_INACTIVE) BeginFocusLoss();
-            else if (g_state.recovering) ArmRecovery(false);
+            else FocusReturned();
             break;
         case WM_ACTIVATEAPP:
             if (!wParam) BeginFocusLoss();
-            else if (g_state.recovering) {
-                ArmRecovery(false);
-            }
+            else FocusReturned();
             break;
         case WM_SETFOCUS:
-            if (g_state.recovering) ArmRecovery(false);
+            FocusReturned();
             break;
         case WM_KILLFOCUS:
             BeginFocusLoss();
             break;
         case WM_DISPLAYCHANGE:
-            if (g_state.recovering && LOWORD(lParam) == g_state.displayWidth &&
+            if (g_state.recovering && g_state.focusReturned &&
+                LOWORD(lParam) == g_state.displayWidth &&
                 HIWORD(lParam) == g_state.displayHeight) {
                 ArmRecovery(true);
             }
@@ -196,16 +205,25 @@ BOOL CALLBACK FindGameWindow(HWND window, LPARAM output) {
 
 }  // namespace
 
-bool Install(const Settings& settings) {
+bool Install(const Settings& settings, HANDLE stopEvent) {
     if (!settings.enabled) return true;
+    if (!stopEvent || WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0) return false;
     g_settings = settings;
     if (!PatchClipCursorImport()) return false;
 
     for (unsigned attempt = 0; attempt < 300 && !g_window; ++attempt) {
         EnumWindows(FindGameWindow, reinterpret_cast<LPARAM>(&g_window));
-        if (!g_window) Sleep(100);
+        if (!g_window && WaitForSingleObject(stopEvent, 100) == WAIT_OBJECT_0) {
+            Remove();
+            return false;
+        }
     }
     if (!g_window) {
+        Remove();
+        return false;
+    }
+
+    if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0) {
         Remove();
         return false;
     }

@@ -18,6 +18,8 @@ constexpr uintptr_t kPatchAddressClipCursorToViewPort = 0x4628D3;
 constexpr uintptr_t kDynamicResolutionCodeCave = 0x5E4879;
 
 HMODULE g_realDInput8 = nullptr;
+HANDLE g_recoveryStopEvent = nullptr;
+HANDLE g_recoveryThread = nullptr;
 bool g_logAppliedPatches = false;
 
 struct PatchConfig {
@@ -261,8 +263,33 @@ DWORD WINAPI InstallCursorClipRecovery(void*) {
         config.waitForDisplayChange,
         config.restoreCursorClipDelayMs,
     };
-    cursor_clip_recovery::Install(settings);
+    cursor_clip_recovery::Install(settings, g_recoveryStopEvent);
     return 0;
+}
+
+void StartCursorClipRecovery() {
+    g_recoveryStopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!g_recoveryStopEvent) return;
+
+    g_recoveryThread = CreateThread(nullptr, 0, InstallCursorClipRecovery, nullptr, 0, nullptr);
+    if (!g_recoveryThread) {
+        CloseHandle(g_recoveryStopEvent);
+        g_recoveryStopEvent = nullptr;
+    }
+}
+
+void StopCursorClipRecovery() {
+    if (g_recoveryStopEvent) SetEvent(g_recoveryStopEvent);
+    if (g_recoveryThread) {
+        WaitForSingleObject(g_recoveryThread, INFINITE);
+        CloseHandle(g_recoveryThread);
+        g_recoveryThread = nullptr;
+    }
+    cursor_clip_recovery::Remove();
+    if (g_recoveryStopEvent) {
+        CloseHandle(g_recoveryStopEvent);
+        g_recoveryStopEvent = nullptr;
+    }
 }
 
 void ApplyBhdPatches() {
@@ -361,16 +388,16 @@ extern "C" HRESULT WINAPI DllUnregisterServer() {
     return real != nullptr ? real() : E_FAIL;
 }
 
-BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
+BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(module);
         ApplyBhdPatches();
         LoadRealDInput8();
-        HANDLE thread = CreateThread(nullptr, 0, InstallCursorClipRecovery, nullptr, 0, nullptr);
-        if (thread) CloseHandle(thread);
+        StartCursorClipRecovery();
     } else if (reason == DLL_PROCESS_DETACH) {
-        cursor_clip_recovery::Remove();
-        if (g_realDInput8 != nullptr) {
+        if (reserved == nullptr) StopCursorClipRecovery();
+        else if (g_recoveryStopEvent) SetEvent(g_recoveryStopEvent);
+        if (reserved == nullptr && g_realDInput8 != nullptr) {
             FreeLibrary(g_realDInput8);
             g_realDInput8 = nullptr;
         }

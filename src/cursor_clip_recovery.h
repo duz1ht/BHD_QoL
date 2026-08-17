@@ -10,7 +10,7 @@ struct Settings {
     UINT delayMs = 250;
 };
 
-bool Install(const Settings& settings);
+bool Install(const Settings& settings, HANDLE stopEvent);
 void Remove();
 
 }  // namespace cursor_clip_recovery
