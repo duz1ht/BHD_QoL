@@ -23,16 +23,8 @@ constexpr uintptr_t kScreenHeight = 0x009F72C4;
 
 constexpr unsigned char kExpectedPollBytes[] = {0x83, 0xEC, 0x24, 0x56, 0x8B, 0x35};
 constexpr size_t kDetourSize = sizeof(kExpectedPollBytes);
-constexpr size_t kEventCapacity = 128;
-
 using PollMouseInputFn = void(__cdecl*)();
 using MouseDispatcherFn = void(__cdecl*)(WPARAM, LPARAM, UINT, int);
-
-struct MouseEvent {
-    WPARAM state;
-    LPARAM position;
-    UINT message;
-};
 
 volatile LONG g_accumX = 0;
 volatile LONG g_accumY = 0;
@@ -50,16 +42,11 @@ volatile LONG g_intervalY = 0;
 volatile LONG g_absoluteReports = 0;
 volatile LONG g_sizeFailures = 0;
 volatile LONG g_readFailures = 0;
-volatile LONG g_queueOverflows = 0;
 bool g_enabled = false;
 DWORD g_statisticsIntervalMs = 5000;
 DWORD g_lastStatisticsTick = 0;
 HWND g_window = nullptr;
 PollMouseInputFn g_legacyPoll = nullptr;
-CRITICAL_SECTION g_eventLock;
-MouseEvent g_events[kEventCapacity] = {};
-size_t g_eventRead = 0;
-size_t g_eventWrite = 0;
 HANDLE g_loggedDevices[16] = {};
 size_t g_loggedDeviceCount = 0;
 
@@ -89,27 +76,20 @@ void UpdateVirtualCursor(LONG deltaX, LONG deltaY) {
     *reinterpret_cast<volatile LONG*>(kCursorY) = y;
 }
 
-void QueueEvent(UINT message, WPARAM state, LPARAM position) {
-    EnterCriticalSection(&g_eventLock);
-    const size_t next = (g_eventWrite + 1) % kEventCapacity;
-    if (next == g_eventRead) {
-        g_eventRead = (g_eventRead + 1) % kEventCapacity;
-        InterlockedIncrement(&g_droppedPackets);
-        InterlockedIncrement(&g_queueOverflows);
-        logger::Log("WARN", "RawInput.Queue", "queue full; oldest event discarded");
-    }
-    g_events[g_eventWrite] = {state, position, message};
-    g_eventWrite = next;
-    LeaveCriticalSection(&g_eventLock);
+void DispatchEvent(UINT message, WPARAM state, LPARAM position) {
+    const auto dispatch = reinterpret_cast<MouseDispatcherFn>(kMouseDispatcher);
+    dispatch(state, position, message, 1);
+    logger::Log("INFO", "RawInput.Dispatch",
+                "message=0x%04X state=0x%04lX x=%d y=%d",
+                message, static_cast<unsigned long>(state),
+                static_cast<int>(static_cast<short>(LOWORD(position))),
+                static_cast<int>(static_cast<short>(HIWORD(position))));
 }
 
 void ClearInputState() {
     InterlockedExchange(&g_accumX, 0);
     InterlockedExchange(&g_accumY, 0);
     InterlockedExchange(&g_buttonState, 0);
-    EnterCriticalSection(&g_eventLock);
-    g_eventRead = g_eventWrite;
-    LeaveCriticalSection(&g_eventLock);
 }
 
 void SetButton(USHORT flags, USHORT downFlag, USHORT upFlag, LONG stateBit,
@@ -124,7 +104,8 @@ void SetButton(USHORT flags, USHORT downFlag, USHORT upFlag, LONG stateBit,
             oldState = observed;
         } while (true);
         const WPARAM state = static_cast<WPARAM>(newState);
-        QueueEvent(downMessage, state | (CurrentState() & (MK_SHIFT | MK_CONTROL)), CurrentPosition());
+        DispatchEvent(downMessage, state | (CurrentState() & (MK_SHIFT | MK_CONTROL)),
+                      CurrentPosition());
         logger::Log("INFO", "RawInput.Button", "message=0x%04X state=0x%04lX", downMessage,
                     static_cast<unsigned long>(state));
     }
@@ -138,7 +119,8 @@ void SetButton(USHORT flags, USHORT downFlag, USHORT upFlag, LONG stateBit,
             oldState = observed;
         } while (true);
         const WPARAM state = static_cast<WPARAM>(newState);
-        QueueEvent(upMessage, state | (CurrentState() & (MK_SHIFT | MK_CONTROL)), CurrentPosition());
+        DispatchEvent(upMessage, state | (CurrentState() & (MK_SHIFT | MK_CONTROL)),
+                      CurrentPosition());
         logger::Log("INFO", "RawInput.Button", "message=0x%04X state=0x%04lX", upMessage,
                     static_cast<unsigned long>(state));
     }
@@ -217,7 +199,7 @@ void ProcessRawInput(HRAWINPUT handle) {
                       MK_MBUTTON, WM_MBUTTONDOWN, WM_MBUTTONUP);
             if ((mouse.usButtonFlags & RI_MOUSE_WHEEL) != 0) {
                 const WPARAM wheel = MAKEWPARAM(CurrentState(), static_cast<USHORT>(mouse.usButtonData));
-                QueueEvent(WM_MOUSEWHEEL, wheel, CurrentPosition());
+                DispatchEvent(WM_MOUSEWHEEL, wheel, CurrentPosition());
                 logger::Log("INFO", "RawInput.Wheel", "delta=%d state=0x%04lX",
                             static_cast<short>(mouse.usButtonData),
                             static_cast<unsigned long>(CurrentState()));
@@ -295,22 +277,6 @@ void EnsureInitialized() {
     if (!game_window::EnsureInstalled(window)) InterlockedExchange(&g_initializing, 0);
 }
 
-void DrainEvents() {
-    const auto dispatch = reinterpret_cast<MouseDispatcherFn>(kMouseDispatcher);
-    for (;;) {
-        MouseEvent event = {};
-        EnterCriticalSection(&g_eventLock);
-        if (g_eventRead == g_eventWrite) {
-            LeaveCriticalSection(&g_eventLock);
-            break;
-        }
-        event = g_events[g_eventRead];
-        g_eventRead = (g_eventRead + 1) % kEventCapacity;
-        LeaveCriticalSection(&g_eventLock);
-        dispatch(event.state, event.position, event.message, 1);
-    }
-}
-
 extern "C" void __cdecl RawPollMouseInput() {
     EnsureInitialized();
     if (InterlockedCompareExchange(&g_backendState, kInactive, kInactive) != kActive) {
@@ -323,7 +289,6 @@ extern "C" void __cdecl RawPollMouseInput() {
         return;
     }
 
-    DrainEvents();
     *reinterpret_cast<volatile LONG*>(kMouseState) = static_cast<LONG>(CurrentState());
     const LONG x = InterlockedExchange(&g_accumX, 0);
     const LONG y = InterlockedExchange(&g_accumY, 0);
@@ -342,13 +307,12 @@ extern "C" void __cdecl RawPollMouseInput() {
         const LONG absolute = InterlockedExchange(&g_absoluteReports, 0);
         const LONG sizeFailures = InterlockedExchange(&g_sizeFailures, 0);
         const LONG readFailures = InterlockedExchange(&g_readFailures, 0);
-        const LONG overflows = InterlockedExchange(&g_queueOverflows, 0);
         g_lastStatisticsTick = now;
         logger::Log("INFO", "RawInput.Stats",
                     "interval_ms=%lu reports=%ld polls=%ld total_dx=%ld total_dy=%ld dropped=%ld "
-                    "absolute_ignored=%ld size_failures=%ld read_failures=%ld queue_overflows=%ld active=%ld",
+                    "absolute_ignored=%ld size_failures=%ld read_failures=%ld active=%ld",
                     g_statisticsIntervalMs, reports, polls, totalX, totalY, dropped, absolute,
-                    sizeFailures, readFailures, overflows,
+                    sizeFailures, readFailures,
                     InterlockedCompareExchange(&g_backendState, kInactive, kInactive) == kActive);
         game_window::HandleStatisticsInterval();
     }
@@ -402,9 +366,7 @@ bool Install(const Settings& settings) {
     g_enabled = true;
     g_statisticsIntervalMs = settings.statisticsIntervalMs;
     g_lastStatisticsTick = GetTickCount();
-    InitializeCriticalSection(&g_eventLock);
     if (!WriteDetour()) {
-        DeleteCriticalSection(&g_eventLock);
         g_enabled = false;
         logger::Log("ERROR", "RawInput", "installation failed; legacy input retained");
         return false;
