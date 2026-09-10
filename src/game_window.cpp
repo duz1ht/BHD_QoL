@@ -14,6 +14,7 @@ HWND g_window = nullptr;
 WNDPROC g_originalWndProc = nullptr;
 volatile LONG g_installing = 0;
 constexpr uintptr_t kGameWindow = 0x00F654FC;
+constexpr UINT kInitialFocusRecoveryMessage = WM_APP + 0x42;
 
 void TryResume(const char* trigger) {
     const bool clipReady = cursor_clip::HandleFocusGained(trigger);
@@ -33,10 +34,32 @@ void HandleFocusLost() {
     cursor_clip::HandleFocusLost();
 }
 
+void HandleInitialFocusRecovery(HWND window) {
+    if (!g_settings.rawMouseInput || !IsWindowVisible(window) || IsIconic(window) ||
+        GetForegroundWindow() != window) {
+        return;
+    }
+    const HWND focusBefore = GetFocus();
+    if (focusBefore == nullptr) {
+        SetLastError(ERROR_SUCCESS);
+        const HWND previousFocus = SetFocus(window);
+        const DWORD error = GetFocus() == window ? ERROR_SUCCESS : GetLastError();
+        logger::Log(error == ERROR_SUCCESS ? "INFO" : "WARN", "GameWindow",
+                    "initial focus recovery previous=0x%08lX current=0x%08lX error=%lu",
+                    reinterpret_cast<unsigned long>(previousFocus),
+                    reinterpret_cast<unsigned long>(GetFocus()), error);
+    }
+    TryResume("initial_focus_recovery");
+}
+
 LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     if (message == WM_INPUT && g_settings.rawMouseInput) {
         raw_input::HandleRawInput(reinterpret_cast<HRAWINPUT>(lParam));
         return DefWindowProcW(window, message, wParam, lParam);
+    }
+    if (message == kInitialFocusRecoveryMessage) {
+        HandleInitialFocusRecovery(window);
+        return 0;
     }
     const LRESULT result = CallWindowProcW(g_originalWndProc, window, message, wParam, lParam);
     switch (message) {
@@ -123,11 +146,16 @@ bool EnsureInstalled(HWND window) {
                 reinterpret_cast<unsigned long>(window));
     fullscreen_borderless::Apply(window, "initialization");
     cursor_clip::Initialize(g_settings.restoreCursorClip, window);
-    if (g_settings.rawMouseInput && !raw_input::AttachWindow(window)) {
-        logger::Log("ERROR", "GameWindow",
-                    "Raw Input window attachment failed; legacy mouse retained and "
-                    "RestoreCursorClip remains available");
-        g_settings.rawMouseInput = false;
+    if (g_settings.rawMouseInput) {
+        if (!raw_input::AttachWindow(window)) {
+            logger::Log("ERROR", "GameWindow",
+                        "Raw Input window attachment failed; legacy mouse retained and "
+                        "RestoreCursorClip remains available");
+            g_settings.rawMouseInput = false;
+        } else if (!PostMessageW(window, kInitialFocusRecoveryMessage, 0, 0)) {
+            logger::Log("WARN", "GameWindow",
+                        "could not post initial focus recovery: error=%lu", GetLastError());
+        }
     }
     TryResume("initialization");
     InterlockedExchange(&g_installing, 0);

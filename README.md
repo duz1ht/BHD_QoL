@@ -42,6 +42,10 @@ last valid game clip, and resumes only after the restored window is visible,
 unminimized, foreground, focused, and confined again. Absolute-device motion is
 ignored rather than treated as relative deltas.
 
+During startup, legacy polling remains active until Raw Input receives valid game-window
+focus for the first time. The window thread performs a guarded initial focus recovery so
+borderless initialization cannot leave the menu cursor waiting for an Alt+Tab cycle.
+
 
 ## Runtime configuration
 
