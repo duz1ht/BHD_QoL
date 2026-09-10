@@ -50,6 +50,7 @@ Copy `dinput8.ini` next to `dfbhd.exe` and the compiled `dinput8.dll` to enable 
 ```ini
 [PatchGroups]
 DPIAware=1
+FullscreenBorderless=0
 NVGResolution=1
 DynamicResolution=1
 ClipCursorFix=1
@@ -57,7 +58,7 @@ RawMouseInput=1
 RestoreCursorClip=1
 
 [Logging]
-Enabled=1
+Enabled=0
 RawInputStatisticsIntervalMs=5000
 ```
 
@@ -78,7 +79,13 @@ replace an awareness mode that is already configured (including Per-Monitor awar
 and an unavailable API is non-fatal. An executable manifest remains preferable when
 the game executable can be modified.
 
-`Logging.Enabled=1` creates a new automatically named
+`FullscreenBorderless=1` forces the game's D3D8 windowed path and internal resolution
+to the dimensions of the monitor nearest its initial window, then removes the caption,
+border, and resize frame and covers the monitor's complete rectangle (not its work
+area). It is disabled by default. Keep `DPIAware=1` enabled so Windows does not
+virtualize monitor coordinates.
+
+Logging is disabled by default. Set `Logging.Enabled=1` to create a new automatically named
 `BHD_QoL_<date>_<time>_<pid>.log` beside `dfbhd.exe` for every session. Every line
 is flushed immediately, so no DebugView installation is required and diagnostics
 normally survive a game crash. `RawInputStatisticsIntervalMs` controls only the

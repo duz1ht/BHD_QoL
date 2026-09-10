@@ -7,6 +7,7 @@ namespace game_window {
 struct Settings {
     bool rawMouseInput;
     bool restoreCursorClip;
+    bool fullscreenBorderless;
 };
 
 void Configure(const Settings& settings);

@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "cursor_clip.h"
+#include "fullscreen_borderless.h"
 #include "logger.h"
 #include "raw_input.h"
 
@@ -55,10 +56,13 @@ LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM 
             break;
         case WM_MOVE:
         case WM_DISPLAYCHANGE:
+            fullscreen_borderless::Apply(window,
+                message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
             cursor_clip::HandleWindowChanged(message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
             ResumeRawInputIfReady(message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
             break;
         case WM_SIZE:
+            if (wParam != SIZE_MINIMIZED) fullscreen_borderless::Apply(window, "WM_SIZE");
             cursor_clip::HandleWindowChanged(wParam == SIZE_MINIMIZED ? "WM_SIZE_MINIMIZED" : "WM_SIZE");
             if (wParam != SIZE_MINIMIZED) ResumeRawInputIfReady("WM_SIZE");
             break;
@@ -89,9 +93,10 @@ DWORD WINAPI WindowDiscoveryThread(void*) {
 
 void Configure(const Settings& settings) {
     g_settings = settings;
-    logger::Log("INFO", "GameWindow", "configured RawMouseInput=%d RestoreCursorClip=%d",
-                settings.rawMouseInput, settings.restoreCursorClip);
-    if (!settings.rawMouseInput && settings.restoreCursorClip) {
+    logger::Log("INFO", "GameWindow",
+                "configured RawMouseInput=%d RestoreCursorClip=%d FullscreenBorderless=%d",
+                settings.rawMouseInput, settings.restoreCursorClip, settings.fullscreenBorderless);
+    if ((!settings.rawMouseInput && settings.restoreCursorClip) || settings.fullscreenBorderless) {
         HANDLE thread = CreateThread(nullptr, 0, WindowDiscoveryThread, nullptr, 0, nullptr);
         if (thread != nullptr) CloseHandle(thread);
         else logger::Log("ERROR", "GameWindow", "window discovery thread failed: error=%lu",
@@ -116,6 +121,7 @@ bool EnsureInstalled(HWND window) {
     g_originalWndProc = reinterpret_cast<WNDPROC>(previous);
     logger::Log("INFO", "GameWindow", "shared WndProc installed hwnd=0x%08lX",
                 reinterpret_cast<unsigned long>(window));
+    fullscreen_borderless::Apply(window, "initialization");
     cursor_clip::Initialize(g_settings.restoreCursorClip, window);
     if (g_settings.rawMouseInput && !raw_input::AttachWindow(window)) {
         logger::Log("ERROR", "GameWindow",
