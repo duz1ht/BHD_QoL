@@ -245,7 +245,12 @@ bool InitializeForWindow(HWND window) {
 
     g_window = window;
     g_originalWndProc = reinterpret_cast<WNDPROC>(previous);
-    RAWINPUTDEVICE device = {0x01, 0x02, RIDEV_NOLEGACY, window};
+    RAWINPUTDEVICE device = {
+        0x01,
+        0x02,
+        RIDEV_NOLEGACY | RIDEV_CAPTUREMOUSE,
+        window,
+    };
     if (!RegisterRawInputDevices(&device, 1, sizeof(device))) {
         SetWindowLongPtrW(window, GWLP_WNDPROC, previous);
         g_window = nullptr;

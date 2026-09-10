@@ -25,8 +25,11 @@ Each patch checks the expected bytes before writing, so unsupported executables 
 ## Raw mouse input
 
 The optional Raw Input backend hooks the supported build's `PollMouseInput()` at
-`005678F0`, registers the game window for `WM_INPUT` with `RIDEV_NOLEGACY`, and
-feeds accumulated relative mouse movement into the game's existing delta fields.
+`005678F0`, registers the game window for `WM_INPUT` with
+`RIDEV_NOLEGACY | RIDEV_CAPTUREMOUSE`, and feeds accumulated relative mouse
+movement into the game's existing delta fields. `RIDEV_CAPTUREMOUSE` prevents a
+mouse click from activating another window; it does not confine the physical
+cursor to the game window.
 Raw button and wheel transitions are sent directly through the game's mouse
 dispatcher, preserving its bindings, sensitivity, inversion, and action pipeline.
 
