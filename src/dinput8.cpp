@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "logger.h"
 #include "raw_input.h"
 
 namespace {
@@ -19,15 +20,14 @@ constexpr uintptr_t kInitialClipCursorCodeCave = 0x5E4912;
 constexpr uintptr_t kClipCursorCodeCave = 0x5E492B;
 
 HMODULE g_realDInput8 = nullptr;
-bool g_logAppliedPatches = false;
-
 struct PatchConfig {
     bool nvgResolution = true;
     bool dynamicResolution = true;
     bool clipCursorFix = true;
     bool rawMouseInput = false;
-    bool logAppliedPatches = false;
-    bool logRawInput = false;
+    bool loggingEnabled = true;
+    unsigned long rawInputStatisticsIntervalMs = 5000;
+    bool invalidStatisticsInterval = false;
 };
 
 struct ByteSpan {
@@ -157,16 +157,6 @@ bool BytesAreZeroFilled(const unsigned char* current, size_t size) {
     return true;
 }
 
-void LogPatchMessage(const char* title, const char* status) {
-    if (!g_logAppliedPatches) {
-        return;
-    }
-
-    char message[512] = {};
-    wsprintfA(message, "BHD_QoL: %s: %s\n", status, title);
-    OutputDebugStringA(message);
-}
-
 bool WriteBytes(uintptr_t virtualAddress, ByteSpan replacement) {
     auto* address = reinterpret_cast<unsigned char*>(virtualAddress);
 
@@ -188,23 +178,27 @@ bool WriteBytes(uintptr_t virtualAddress, ByteSpan replacement) {
 bool ApplyPatch(const Patch& patch) {
     auto* address = reinterpret_cast<unsigned char*>(patch.virtualAddress);
     if (BytesEqual(address, patch.replacement)) {
-        LogPatchMessage(patch.title, "already applied");
+        logger::Log("INFO", "Patch", "address=0x%08lX status=already_applied title=%s",
+                    static_cast<unsigned long>(patch.virtualAddress), patch.title);
         return true;
     }
 
     const bool expectedMatches = BytesEqual(address, patch.expected);
     const bool zeroFilledMatches = patch.allowZeroFilledExpected && BytesAreZeroFilled(address, patch.expected.size);
     if (!expectedMatches && !zeroFilledMatches) {
-        LogPatchMessage(patch.title, "skipped unexpected bytes");
+        logger::Log("ERROR", "Patch", "address=0x%08lX status=unexpected_bytes title=%s",
+                    static_cast<unsigned long>(patch.virtualAddress), patch.title);
         return false;
     }
 
     if (!WriteBytes(patch.virtualAddress, patch.replacement)) {
-        LogPatchMessage(patch.title, "failed VirtualProtect/write");
+        logger::Log("ERROR", "Patch", "address=0x%08lX status=write_failed error=%lu title=%s",
+                    static_cast<unsigned long>(patch.virtualAddress), GetLastError(), patch.title);
         return false;
     }
 
-    LogPatchMessage(patch.title, "applied");
+    logger::Log("INFO", "Patch", "address=0x%08lX status=applied title=%s description=%s",
+                static_cast<unsigned long>(patch.virtualAddress), patch.title, patch.description);
     return true;
 }
 
@@ -219,10 +213,6 @@ bool ApplyPatchGroup(const Patch (&patches)[Count]) {
 
 bool BoolFromIni(const wchar_t* path, const wchar_t* key, bool defaultValue) {
     return GetPrivateProfileIntW(L"PatchGroups", key, defaultValue ? 1 : 0, path) != 0;
-}
-
-bool DebugBoolFromIni(const wchar_t* path, const wchar_t* key, bool defaultValue) {
-    return GetPrivateProfileIntW(L"Debug", key, defaultValue ? 1 : 0, path) != 0;
 }
 
 void BuildIniPath(wchar_t* iniPath, DWORD size) {
@@ -246,34 +236,63 @@ PatchConfig LoadPatchConfig() {
     config.dynamicResolution = BoolFromIni(iniPath, L"DynamicResolution", config.dynamicResolution);
     config.clipCursorFix = BoolFromIni(iniPath, L"ClipCursorFix", config.clipCursorFix);
     config.rawMouseInput = BoolFromIni(iniPath, L"RawMouseInput", config.rawMouseInput);
-    config.logAppliedPatches = DebugBoolFromIni(iniPath, L"LogAppliedPatches", config.logAppliedPatches);
-    config.logRawInput = DebugBoolFromIni(iniPath, L"LogRawInput", config.logRawInput);
+    config.loggingEnabled =
+        GetPrivateProfileIntW(L"Logging", L"Enabled", config.loggingEnabled ? 1 : 0, iniPath) != 0;
+    const int interval = GetPrivateProfileIntW(L"Logging", L"RawInputStatisticsIntervalMs",
+                                                config.rawInputStatisticsIntervalMs, iniPath);
+    config.invalidStatisticsInterval = interval < 1000 || interval > 60000;
+    config.rawInputStatisticsIntervalMs = config.invalidStatisticsInterval
+                                              ? 5000
+                                              : static_cast<unsigned long>(interval);
     return config;
 }
 
 void ApplyBhdPatches() {
-    if (reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)) != kImageBase) {
-        return;
+    const PatchConfig config = LoadPatchConfig();
+    logger::Initialize(config.loggingEnabled);
+    logger::Log("INFO", "Config",
+                "NVGResolution=%d DynamicResolution=%d ClipCursorFix=%d RawMouseInput=%d "
+                "RawInputStatisticsIntervalMs=%lu",
+                config.nvgResolution, config.dynamicResolution, config.clipCursorFix,
+                config.rawMouseInput, config.rawInputStatisticsIntervalMs);
+    if (config.invalidStatisticsInterval) {
+        logger::Log("WARN", "Config",
+                    "invalid RawInputStatisticsIntervalMs; using default 5000");
     }
 
-    const PatchConfig config = LoadPatchConfig();
-    g_logAppliedPatches = config.logAppliedPatches;
+    const uintptr_t imageBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    if (imageBase != kImageBase) {
+        logger::Log("ERROR", "Executable", "unsupported image base: expected=0x%08lX actual=0x%08lX",
+                    static_cast<unsigned long>(kImageBase), static_cast<unsigned long>(imageBase));
+        return;
+    }
+    logger::Log("INFO", "Executable", "image base validated: 0x%08lX",
+                static_cast<unsigned long>(imageBase));
 
     if (config.nvgResolution) {
+        logger::Log("INFO", "NVGResolution", "feature enabled");
         ApplyPatchGroup(kNvgPatches);
+    } else {
+        logger::Log("INFO", "NVGResolution", "feature disabled");
     }
 
     if (config.dynamicResolution) {
+        logger::Log("INFO", "DynamicResolution", "feature enabled");
         if (ApplyPatch(kDynamicResolutionCodeCavePatch)) {
             ApplyPatch(kDynamicResolutionCorePatch);
         }
+    } else {
+        logger::Log("INFO", "DynamicResolution", "feature disabled");
     }
     if (config.clipCursorFix) {
+        logger::Log("INFO", "ClipCursorFix", "feature enabled");
         if (ApplyPatch(kInitialClipCursorCodeCavePatch) && ApplyPatch(kClipCursorCodeCavePatch)) {
             ApplyPatchGroup(kClipCursorPatches);
         }
+    } else {
+        logger::Log("INFO", "ClipCursorFix", "feature disabled");
     }
-    raw_input::Install({config.rawMouseInput, config.logRawInput});
+    raw_input::Install({config.rawMouseInput, config.rawInputStatisticsIntervalMs});
 }
 
 HMODULE LoadRealDInput8() {
@@ -292,6 +311,13 @@ HMODULE LoadRealDInput8() {
     }
 
     g_realDInput8 = LoadLibraryW(systemPath);
+    if (g_realDInput8 == nullptr) {
+        logger::Log("ERROR", "Proxy", "LoadLibraryW failed for system dinput8.dll: error=%lu",
+                    GetLastError());
+    } else {
+        logger::Log("INFO", "Proxy", "system dinput8.dll loaded at 0x%08lX",
+                    reinterpret_cast<unsigned long>(g_realDInput8));
+    }
     return g_realDInput8;
 }
 
@@ -301,7 +327,11 @@ Function GetRealProc(const char* name) {
     if (realDll == nullptr) {
         return nullptr;
     }
-    return reinterpret_cast<Function>(GetProcAddress(realDll, name));
+    const auto function = reinterpret_cast<Function>(GetProcAddress(realDll, name));
+    if (function == nullptr) {
+        logger::Log("ERROR", "Proxy", "GetProcAddress(%s) failed: error=%lu", name, GetLastError());
+    }
+    return function;
 }
 }  // namespace
 

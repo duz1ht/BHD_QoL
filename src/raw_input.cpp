@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <cstring>
 
+#include "logger.h"
+
 namespace raw_input {
 namespace {
 constexpr uintptr_t kPollMouseInput = 0x005678F0;
@@ -40,7 +42,14 @@ volatile LONG g_dropNextMovement = 0;
 volatile LONG g_droppedPackets = 0;
 volatile LONG g_reportCount = 0;
 volatile LONG g_pollCount = 0;
-bool g_debug = false;
+volatile LONG g_intervalX = 0;
+volatile LONG g_intervalY = 0;
+volatile LONG g_absoluteReports = 0;
+volatile LONG g_sizeFailures = 0;
+volatile LONG g_readFailures = 0;
+volatile LONG g_queueOverflows = 0;
+DWORD g_statisticsIntervalMs = 5000;
+DWORD g_lastStatisticsTick = 0;
 HWND g_window = nullptr;
 WNDPROC g_originalWndProc = nullptr;
 PollMouseInputFn g_legacyPoll = nullptr;
@@ -50,12 +59,8 @@ size_t g_eventRead = 0;
 size_t g_eventWrite = 0;
 RECT g_savedClip = {};
 bool g_restoreClip = false;
-
-void Debug(const char* message) {
-    if (g_debug) {
-        OutputDebugStringA(message);
-    }
-}
+HANDLE g_loggedDevices[16] = {};
+size_t g_loggedDeviceCount = 0;
 
 WPARAM CurrentState() {
     WPARAM state = static_cast<WPARAM>(InterlockedCompareExchange(&g_buttonState, 0, 0));
@@ -89,6 +94,8 @@ void QueueEvent(UINT message, WPARAM state, LPARAM position) {
     if (next == g_eventRead) {
         g_eventRead = (g_eventRead + 1) % kEventCapacity;
         InterlockedIncrement(&g_droppedPackets);
+        InterlockedIncrement(&g_queueOverflows);
+        logger::Log("WARN", "RawInput.Queue", "queue full; oldest event discarded");
     }
     g_events[g_eventWrite] = {state, position, message};
     g_eventWrite = next;
@@ -117,6 +124,8 @@ void SetButton(USHORT flags, USHORT downFlag, USHORT upFlag, LONG stateBit,
         } while (true);
         const WPARAM state = static_cast<WPARAM>(newState);
         QueueEvent(downMessage, state | (CurrentState() & (MK_SHIFT | MK_CONTROL)), CurrentPosition());
+        logger::Log("INFO", "RawInput.Button", "message=0x%04X state=0x%04lX", downMessage,
+                    static_cast<unsigned long>(state));
     }
     if ((flags & upFlag) != 0) {
         LONG oldState = InterlockedCompareExchange(&g_buttonState, 0, 0);
@@ -129,6 +138,95 @@ void SetButton(USHORT flags, USHORT downFlag, USHORT upFlag, LONG stateBit,
         } while (true);
         const WPARAM state = static_cast<WPARAM>(newState);
         QueueEvent(upMessage, state | (CurrentState() & (MK_SHIFT | MK_CONTROL)), CurrentPosition());
+        logger::Log("INFO", "RawInput.Button", "message=0x%04X state=0x%04lX", upMessage,
+                    static_cast<unsigned long>(state));
+    }
+}
+
+void LogCursorSnapshot(const char* trigger) {
+    if (g_window == nullptr || !IsWindow(g_window)) {
+        logger::Log("WARN", "CursorClip", "trigger=%s status=window_invalid", trigger);
+        return;
+    }
+
+    RECT client = {};
+    POINT upperLeft = {};
+    POINT lowerRight = {};
+    const bool clientValid = GetClientRect(g_window, &client) != FALSE;
+    upperLeft.x = client.left;
+    upperLeft.y = client.top;
+    lowerRight.x = client.right;
+    lowerRight.y = client.bottom;
+    const bool converted = clientValid && ClientToScreen(g_window, &upperLeft) &&
+                           ClientToScreen(g_window, &lowerRight);
+    RECT clientScreen = {upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y};
+    RECT clip = {};
+    POINT cursor = {};
+    const bool clipValid = GetClipCursor(&clip) != FALSE;
+    const bool cursorValid = GetCursorPos(&cursor) != FALSE;
+    RECT desktop = {GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN),
+                    GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                    GetSystemMetrics(SM_YVIRTUALSCREEN) + GetSystemMetrics(SM_CYVIRTUALSCREEN)};
+
+    const char* status = "clip_query_failed";
+    const char* canEscape = "unknown";
+    if (clipValid && converted) {
+        const bool containedByClient = clip.left >= clientScreen.left &&
+                                       clip.top >= clientScreen.top &&
+                                       clip.right <= clientScreen.right &&
+                                       clip.bottom <= clientScreen.bottom &&
+                                       !IsRectEmpty(&clip);
+        if (containedByClient) {
+            status = "confined_to_game";
+            canEscape = "no";
+        } else if (EqualRect(&clip, &desktop)) {
+            status = "not_confined";
+            canEscape = "yes";
+        } else {
+            status = "confined_to_other_rect";
+            canEscape = "yes";
+        }
+    }
+    const bool focused = GetForegroundWindow() == g_window && GetFocus() == g_window;
+    const bool escaped = cursorValid && converted && !PtInRect(&clientScreen, cursor);
+    logger::Log(escaped && focused ? "WARN" : "INFO", "CursorClip",
+                "trigger=%s status=%s can_escape=%s client=(%ld,%ld)-(%ld,%ld) clip=(%ld,%ld)-(%ld,%ld) "
+                "desktop=(%ld,%ld)-(%ld,%ld) cursor=(%ld,%ld) escaped=%d foreground=%d "
+                "focus=%d visible=%d iconic=%d",
+                trigger, status, canEscape, clientScreen.left, clientScreen.top, clientScreen.right,
+                clientScreen.bottom, clip.left, clip.top, clip.right, clip.bottom, desktop.left,
+                desktop.top, desktop.right, desktop.bottom, cursor.x, cursor.y, escaped,
+                GetForegroundWindow() == g_window, GetFocus() == g_window,
+                IsWindowVisible(g_window), IsIconic(g_window));
+}
+
+void LogDevice(HANDLE device) {
+    for (size_t i = 0; i < g_loggedDeviceCount; ++i) {
+        if (g_loggedDevices[i] == device) return;
+    }
+    if (g_loggedDeviceCount < sizeof(g_loggedDevices) / sizeof(g_loggedDevices[0])) {
+        g_loggedDevices[g_loggedDeviceCount++] = device;
+    }
+
+    RID_DEVICE_INFO info = {};
+    info.cbSize = sizeof(info);
+    UINT infoSize = sizeof(info);
+    const UINT infoResult = GetRawInputDeviceInfoW(device, RIDI_DEVICEINFO, &info, &infoSize);
+    wchar_t wideName[512] = {};
+    UINT nameSize = sizeof(wideName) / sizeof(wideName[0]);
+    const UINT nameResult = GetRawInputDeviceInfoW(device, RIDI_DEVICENAME, wideName, &nameSize);
+    char name[1024] = "unavailable";
+    if (nameResult != static_cast<UINT>(-1)) {
+        WideCharToMultiByte(CP_UTF8, 0, wideName, -1, name, sizeof(name), nullptr, nullptr);
+    }
+    if (infoResult != static_cast<UINT>(-1) && info.dwType == RIM_TYPEMOUSE) {
+        logger::Log("INFO", "RawInput.Device",
+                    "handle=0x%08lX name=%s buttons=%lu sample_rate=%lu horizontal_wheel=%d",
+                    reinterpret_cast<unsigned long>(device), name, info.mouse.dwNumberOfButtons,
+                    info.mouse.dwSampleRate, info.mouse.fHasHorizontalWheel);
+    } else {
+        logger::Log("WARN", "RawInput.Device", "handle=0x%08lX name=%s device_info_error=%lu",
+                    reinterpret_cast<unsigned long>(device), name, GetLastError());
     }
 }
 
@@ -137,6 +235,8 @@ void ProcessRawInput(HRAWINPUT handle) {
     if (GetRawInputData(handle, RID_INPUT, nullptr, &size, sizeof(RAWINPUTHEADER)) != 0 ||
         size == 0) {
         InterlockedIncrement(&g_droppedPackets);
+        InterlockedIncrement(&g_sizeFailures);
+        logger::Log("ERROR", "RawInput", "GetRawInputData size query failed: error=%lu", GetLastError());
         return;
     }
 
@@ -151,6 +251,7 @@ void ProcessRawInput(HRAWINPUT handle) {
     if (read == size) {
         const RAWINPUT* input = reinterpret_cast<const RAWINPUT*>(buffer);
         if (input->header.dwType == RIM_TYPEMOUSE && InterlockedCompareExchange(&g_active, 0, 0)) {
+            LogDevice(input->header.hDevice);
             InterlockedIncrement(&g_reportCount);
             const RAWMOUSE& mouse = input->data.mouse;
             if ((mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0) {
@@ -159,6 +260,8 @@ void ProcessRawInput(HRAWINPUT handle) {
                     InterlockedExchangeAdd(&g_accumY, mouse.lLastY);
                     UpdateVirtualCursor(mouse.lLastX, mouse.lLastY);
                 }
+            } else {
+                InterlockedIncrement(&g_absoluteReports);
             }
 
             SetButton(mouse.usButtonFlags, RI_MOUSE_LEFT_BUTTON_DOWN, RI_MOUSE_LEFT_BUTTON_UP,
@@ -170,10 +273,16 @@ void ProcessRawInput(HRAWINPUT handle) {
             if ((mouse.usButtonFlags & RI_MOUSE_WHEEL) != 0) {
                 const WPARAM wheel = MAKEWPARAM(CurrentState(), static_cast<USHORT>(mouse.usButtonData));
                 QueueEvent(WM_MOUSEWHEEL, wheel, CurrentPosition());
+                logger::Log("INFO", "RawInput.Wheel", "delta=%d state=0x%04lX",
+                            static_cast<short>(mouse.usButtonData),
+                            static_cast<unsigned long>(CurrentState()));
             }
         }
     } else {
         InterlockedIncrement(&g_droppedPackets);
+        InterlockedIncrement(&g_readFailures);
+        logger::Log("ERROR", "RawInput", "GetRawInputData read failed: expected=%u actual=%u error=%lu",
+                    size, read, GetLastError());
     }
 
     if (buffer != stackBuffer) HeapFree(GetProcessHeap(), 0, buffer);
@@ -181,6 +290,8 @@ void ProcessRawInput(HRAWINPUT handle) {
 
 void LoseFocus() {
     if (InterlockedExchange(&g_active, 0) == 0) return;
+    logger::Log("INFO", "Focus", "focus lost; Raw Input suspended and state cleared");
+    LogCursorSnapshot("before_focus_loss");
     ClearInputState();
     g_restoreClip = false;
     RECT clip = {};
@@ -190,8 +301,12 @@ void LoseFocus() {
     if (GetClipCursor(&clip) && !EqualRect(&clip, &desktop)) {
         g_savedClip = clip;
         g_restoreClip = true;
-        ClipCursor(nullptr);
+        const BOOL released = ClipCursor(nullptr);
+        logger::Log(released ? "INFO" : "ERROR", "CursorClip",
+                    "source=raw_input operation=release result=%d error=%lu", released,
+                    released ? 0 : GetLastError());
     }
+    LogCursorSnapshot("after_focus_loss");
 }
 
 void GainFocus() {
@@ -199,14 +314,22 @@ void GainFocus() {
     ClearInputState();
     InterlockedExchange(&g_dropNextMovement, 1);
     if (g_restoreClip && IsWindowVisible(g_window) && !IsIconic(g_window)) {
-        ClipCursor(&g_savedClip);
+        const BOOL restored = ClipCursor(&g_savedClip);
+        logger::Log(restored ? "INFO" : "ERROR", "CursorClip",
+                    "source=raw_input operation=restore rect=(%ld,%ld)-(%ld,%ld) result=%d error=%lu",
+                    g_savedClip.left, g_savedClip.top, g_savedClip.right, g_savedClip.bottom,
+                    restored, restored ? 0 : GetLastError());
     }
     InterlockedExchange(&g_active, 1);
+    logger::Log("INFO", "Focus", "focus gained; Raw Input resumed");
+    LogCursorSnapshot("after_focus_gain");
 }
 
 void UnregisterRawInput() {
     RAWINPUTDEVICE device = {0x01, 0x02, RIDEV_REMOVE, nullptr};
-    RegisterRawInputDevices(&device, 1, sizeof(device));
+    const BOOL result = RegisterRawInputDevices(&device, 1, sizeof(device));
+    logger::Log(result ? "INFO" : "ERROR", "RawInput", "unregister result=%d error=%lu", result,
+                result ? 0 : GetLastError());
 }
 
 LRESULT CALLBACK RawInputWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -231,17 +354,41 @@ LRESULT CALLBACK RawInputWndProc(HWND window, UINT message, WPARAM wParam, LPARA
             InterlockedExchange(&g_active, 0);
             UnregisterRawInput();
             break;
+        case WM_MOVE:
+            LogCursorSnapshot("WM_MOVE");
+            break;
+        case WM_SIZE:
+            LogCursorSnapshot(wParam == SIZE_MINIMIZED ? "WM_SIZE_MINIMIZED" : "WM_SIZE");
+            break;
+        case WM_DISPLAYCHANGE:
+            LogCursorSnapshot("WM_DISPLAYCHANGE");
+            break;
     }
     return CallWindowProcW(g_originalWndProc, window, message, wParam, lParam);
 }
 
 bool InitializeForWindow(HWND window) {
     if (window == nullptr || !IsWindow(window)) return false;
+    logger::Log("INFO", "RawInput", "game window found: hwnd=0x%08lX",
+                reinterpret_cast<unsigned long>(window));
+    wchar_t titleWide[256] = {};
+    wchar_t classWide[128] = {};
+    char title[512] = {};
+    char className[256] = {};
+    GetWindowTextW(window, titleWide, sizeof(titleWide) / sizeof(titleWide[0]));
+    GetClassNameW(window, classWide, sizeof(classWide) / sizeof(classWide[0]));
+    WideCharToMultiByte(CP_UTF8, 0, titleWide, -1, title, sizeof(title), nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, 0, classWide, -1, className, sizeof(className), nullptr, nullptr);
+    logger::Log("INFO", "RawInput", "window title=%s class=%s", title, className);
 
     SetLastError(0);
     const LONG_PTR previous = SetWindowLongPtrW(
         window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(RawInputWndProc));
-    if (previous == 0 && GetLastError() != 0) return false;
+    if (previous == 0 && GetLastError() != 0) {
+        logger::Log("ERROR", "RawInput", "SetWindowLongPtrW failed: error=%lu", GetLastError());
+        return false;
+    }
+    logger::Log("INFO", "RawInput", "WndProc subclass installed");
 
     g_window = window;
     g_originalWndProc = reinterpret_cast<WNDPROC>(previous);
@@ -252,15 +399,20 @@ bool InitializeForWindow(HWND window) {
         window,
     };
     if (!RegisterRawInputDevices(&device, 1, sizeof(device))) {
+        const DWORD error = GetLastError();
         SetWindowLongPtrW(window, GWLP_WNDPROC, previous);
         g_window = nullptr;
         g_originalWndProc = nullptr;
+        logger::Log("ERROR", "RawInput",
+                    "RegisterRawInputDevices flags=NOLEGACY|CAPTUREMOUSE failed: error=%lu; legacy fallback retained",
+                    error);
         return false;
     }
 
     InterlockedExchange(&g_dropNextMovement, 1);
     InterlockedExchange(&g_active, 1);
-    Debug("BHD_QoL Raw Input: registered mouse and installed WndProc\n");
+    logger::Log("INFO", "RawInput", "registered flags=RIDEV_NOLEGACY|RIDEV_CAPTUREMOUSE; active=1");
+    LogCursorSnapshot("initialization");
     return true;
 }
 
@@ -302,27 +454,47 @@ extern "C" void __cdecl RawPollMouseInput() {
     *reinterpret_cast<volatile LONG*>(kMouseState) = static_cast<LONG>(CurrentState());
     const LONG x = InterlockedExchange(&g_accumX, 0);
     const LONG y = InterlockedExchange(&g_accumY, 0);
+    InterlockedExchangeAdd(&g_intervalX, x);
+    InterlockedExchangeAdd(&g_intervalY, y);
     *reinterpret_cast<volatile LONG*>(kRelativeX) = x;
     *reinterpret_cast<volatile LONG*>(kRelativeY) = y;
-    const LONG polls = InterlockedIncrement(&g_pollCount);
-    if (g_debug && (polls % 600) == 0) {
-        char message[192] = {};
-        wsprintfA(message,
-                  "BHD_QoL Raw Input: reports=%ld polls=%ld delta=%ld,%ld dropped=%ld focus=%ld\n",
-                  InterlockedCompareExchange(&g_reportCount, 0, 0), polls, x, y,
-                  InterlockedCompareExchange(&g_droppedPackets, 0, 0),
-                  InterlockedCompareExchange(&g_active, 0, 0));
-        OutputDebugStringA(message);
+    InterlockedIncrement(&g_pollCount);
+    const DWORD now = GetTickCount();
+    if (now - g_lastStatisticsTick >= g_statisticsIntervalMs) {
+        const LONG reports = InterlockedExchange(&g_reportCount, 0);
+        const LONG polls = InterlockedExchange(&g_pollCount, 0);
+        const LONG totalX = InterlockedExchange(&g_intervalX, 0);
+        const LONG totalY = InterlockedExchange(&g_intervalY, 0);
+        const LONG dropped = InterlockedExchange(&g_droppedPackets, 0);
+        const LONG absolute = InterlockedExchange(&g_absoluteReports, 0);
+        const LONG sizeFailures = InterlockedExchange(&g_sizeFailures, 0);
+        const LONG readFailures = InterlockedExchange(&g_readFailures, 0);
+        const LONG overflows = InterlockedExchange(&g_queueOverflows, 0);
+        g_lastStatisticsTick = now;
+        logger::Log("INFO", "RawInput.Stats",
+                    "interval_ms=%lu reports=%ld polls=%ld total_dx=%ld total_dy=%ld dropped=%ld "
+                    "absolute_ignored=%ld size_failures=%ld read_failures=%ld queue_overflows=%ld active=%ld",
+                    g_statisticsIntervalMs, reports, polls, totalX, totalY, dropped, absolute,
+                    sizeFailures, readFailures, overflows,
+                    InterlockedCompareExchange(&g_active, 0, 0));
+        LogCursorSnapshot("statistics_interval");
     }
 }
 
 bool WriteDetour() {
     auto* target = reinterpret_cast<unsigned char*>(kPollMouseInput);
-    if (std::memcmp(target, kExpectedPollBytes, kDetourSize) != 0) return false;
+    if (std::memcmp(target, kExpectedPollBytes, kDetourSize) != 0) {
+        logger::Log("ERROR", "RawInput", "unexpected PollMouseInput bytes at 0x%08lX",
+                    static_cast<unsigned long>(kPollMouseInput));
+        return false;
+    }
 
     auto* trampoline = static_cast<unsigned char*>(VirtualAlloc(
         nullptr, kDetourSize + 5, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
-    if (trampoline == nullptr) return false;
+    if (trampoline == nullptr) {
+        logger::Log("ERROR", "RawInput", "VirtualAlloc trampoline failed: error=%lu", GetLastError());
+        return false;
+    }
     std::memcpy(trampoline, target, kDetourSize);
     trampoline[kDetourSize] = 0xE9;
     *reinterpret_cast<int32_t*>(trampoline + kDetourSize + 1) =
@@ -334,25 +506,34 @@ bool WriteDetour() {
     *reinterpret_cast<int32_t*>(detour + 1) = static_cast<int32_t>(
         reinterpret_cast<uintptr_t>(&RawPollMouseInput) - (kPollMouseInput + 5));
     DWORD oldProtect = 0;
-    if (!VirtualProtect(target, sizeof(detour), PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
+    if (!VirtualProtect(target, sizeof(detour), PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        logger::Log("ERROR", "RawInput", "VirtualProtect detour failed: error=%lu", GetLastError());
+        return false;
+    }
     std::memcpy(target, detour, sizeof(detour));
     FlushInstructionCache(GetCurrentProcess(), target, sizeof(detour));
     DWORD ignored = 0;
     VirtualProtect(target, sizeof(detour), oldProtect, &ignored);
+    logger::Log("INFO", "RawInput", "PollMouseInput detour installed; trampoline=0x%08lX",
+                reinterpret_cast<unsigned long>(trampoline));
     return true;
 }
 }  // namespace
 
 bool Install(const Settings& settings) {
-    if (!settings.enabled) return true;
-    g_debug = settings.debug;
+    if (!settings.enabled) {
+        logger::Log("INFO", "RawInput", "feature disabled");
+        return true;
+    }
+    logger::Log("INFO", "RawInput", "feature enabled");
+    g_statisticsIntervalMs = settings.statisticsIntervalMs;
+    g_lastStatisticsTick = GetTickCount();
     InitializeCriticalSection(&g_eventLock);
     if (!WriteDetour()) {
         DeleteCriticalSection(&g_eventLock);
-        Debug("BHD_QoL Raw Input: unsupported PollMouseInput bytes; legacy input retained\n");
+        logger::Log("ERROR", "RawInput", "installation failed; legacy input retained");
         return false;
     }
-    Debug("BHD_QoL Raw Input: PollMouseInput hook installed\n");
     return true;
 }
 }  // namespace raw_input

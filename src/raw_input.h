@@ -4,7 +4,7 @@ namespace raw_input {
 
 struct Settings {
     bool enabled;
-    bool debug;
+    unsigned long statisticsIntervalMs;
 };
 
 // Installs the validated PollMouseInput detour. Window discovery and Raw Input

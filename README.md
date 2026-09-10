@@ -51,12 +51,28 @@ DynamicResolution=1
 ClipCursorFix=1
 RawMouseInput=0
 
-[Debug]
-LogAppliedPatches=0
-LogRawInput=0
+[Logging]
+Enabled=1
+RawInputStatisticsIntervalMs=5000
 ```
 
-Set a patch group to `1` to enable it or `0` to disable it. Raw Input remains off by default so unsupported executable builds retain the original input path. If `dinput8.ini` is missing, the DLL uses the same defaults shown above. `LogAppliedPatches=1` writes patch status messages to the debugger through `OutputDebugStringA`; `LogRawInput=1` enables Raw Input lifecycle diagnostics.
+Set a patch group to `1` to enable it or `0` to disable it. Raw Input remains off by default so unsupported executable builds retain the original input path. If `dinput8.ini` is missing, the DLL uses the same defaults shown above.
+
+`Logging.Enabled=1` creates a new automatically named
+`BHD_QoL_<date>_<time>_<pid>.log` beside `dfbhd.exe` for every session. Every line
+is flushed immediately, so no DebugView installation is required and diagnostics
+normally survive a game crash. `RawInputStatisticsIntervalMs` controls only the
+frequency of aggregated Raw Input statistics and cursor-confinement snapshots
+(valid range 1000-60000 ms, default 5000); it never delays mouse input.
+
+The log records the effective configuration, executable validation, every patch
+result, Raw Input registration and fallback, button and wheel transitions, focus
+changes, and periodic movement statistics. Cursor snapshots compare the game
+client rectangle, current `ClipCursor` rectangle, virtual desktop, physical cursor
+position, foreground/focus state, visibility and minimization. A snapshot reports
+`confined_to_game`, `confined_to_other_rect`, `not_confined`, or
+`clip_query_failed`, plus `escaped=1` when the physical cursor is outside the game
+client area.
 
 ## Knowledge_Base policy
 
