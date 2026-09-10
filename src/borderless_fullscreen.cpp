@@ -37,6 +37,7 @@ LONG g_lastRenderWidth = -1;
 LONG g_lastRenderHeight = -1;
 LONG g_lastOutputWidth = -1;
 LONG g_lastOutputHeight = -1;
+bool g_loggedUnknownResolution = false;
 
 bool WriteGameValue(uintptr_t address, LONG value, const char* name) {
     void* destination = reinterpret_cast<void*>(address);
@@ -195,25 +196,40 @@ void LogActiveState(HWND window, const char* trigger) {
     const LONG renderHeight = *reinterpret_cast<volatile LONG*>(kScreenHeight);
     const LONG outputWidth = g_monitorRect.right - g_monitorRect.left;
     const LONG outputHeight = g_monitorRect.bottom - g_monitorRect.top;
+    const bool resolutionKnown = renderWidth > 0 && renderHeight > 0;
     const bool resolutionOk = !g_forceDesktopResolution ||
-                              (renderWidth == outputWidth && renderHeight == outputHeight);
-    const bool scaled = renderWidth != outputWidth || renderHeight != outputHeight;
+                              (resolutionKnown && renderWidth == outputWidth &&
+                               renderHeight == outputHeight);
+    const bool scaled = resolutionKnown &&
+                        (renderWidth != outputWidth || renderHeight != outputHeight);
     const LONG active = styleOk && outerOk && clientOk && windowedOk && resolutionOk;
-    if (active == g_lastActive && renderWidth == g_lastRenderWidth &&
+    if (!resolutionKnown && g_loggedUnknownResolution && active == g_lastActive &&
+        outputWidth == g_lastOutputWidth && outputHeight == g_lastOutputHeight) return;
+    if (resolutionKnown && active == g_lastActive && renderWidth == g_lastRenderWidth &&
         renderHeight == g_lastRenderHeight && outputWidth == g_lastOutputWidth &&
         outputHeight == g_lastOutputHeight) return;
     g_lastActive = active;
-    g_lastRenderWidth = renderWidth;
-    g_lastRenderHeight = renderHeight;
+    g_lastRenderWidth = resolutionKnown ? renderWidth : -1;
+    g_lastRenderHeight = resolutionKnown ? renderHeight : -1;
     g_lastOutputWidth = outputWidth;
     g_lastOutputHeight = outputHeight;
-    logger::Log(active ? "INFO" : "WARN", "BorderlessFullscreen",
-                "trigger=%s active=%ld style_ok=%d window_rect_ok=%d client_rect_ok=%d "
-                "windowed_ok=%d resolution_ok=%d force_desktop_resolution=%d "
-                "render_resolution=%ldx%ld output_size=%ldx%ld scaled=%d",
-                trigger, active, styleOk, outerOk, clientOk, windowedOk, resolutionOk,
-                g_forceDesktopResolution, renderWidth, renderHeight, outputWidth, outputHeight,
-                scaled);
+    g_loggedUnknownResolution = !resolutionKnown;
+    if (resolutionKnown) {
+        logger::Log(active ? "INFO" : "WARN", "BorderlessFullscreen",
+                    "trigger=%s active=%ld style_ok=%d window_rect_ok=%d client_rect_ok=%d "
+                    "windowed_ok=%d resolution_ok=%d force_desktop_resolution=%d "
+                    "render_resolution=%ldx%ld output_size=%ldx%ld scaled=%d",
+                    trigger, active, styleOk, outerOk, clientOk, windowedOk, resolutionOk,
+                    g_forceDesktopResolution, renderWidth, renderHeight, outputWidth,
+                    outputHeight, scaled);
+    } else {
+        logger::Log(active ? "INFO" : "WARN", "BorderlessFullscreen",
+                    "trigger=%s active=%ld style_ok=%d window_rect_ok=%d client_rect_ok=%d "
+                    "windowed_ok=%d resolution_ok=%d force_desktop_resolution=%d "
+                    "render_resolution=unknown output_size=%ldx%ld scaled=unknown",
+                    trigger, active, styleOk, outerOk, clientOk, windowedOk, resolutionOk,
+                    g_forceDesktopResolution, outputWidth, outputHeight);
+    }
 }
 
 bool WindowMatches(HWND window, LONG_PTR style, LONG_PTR exStyle) {

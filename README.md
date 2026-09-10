@@ -103,7 +103,8 @@ window and client rectangles, and windowed-render state. The log reports the ren
 resolution and output size separately and indicates whether scaling is active. When
 desktop resolution is forced, the feature also patches the supported executable's
 resolution setup before device creation; an executable signature mismatch disables only
-this feature.
+this feature. Until the game publishes a positive internal resolution, diagnostics show
+`render_resolution=unknown` rather than treating the startup `0x0` value as final.
 
 Logging is disabled by default. Set `Logging.Enabled=1` to create a new automatically named
 `BHD_QoL_<date>_<time>_<pid>.log` beside `dfbhd.exe` for every session. Every line

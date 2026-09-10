@@ -15,6 +15,8 @@ WNDPROC g_originalWndProc = nullptr;
 volatile LONG g_installing = 0;
 constexpr uintptr_t kGameWindow = 0x00F654FC;
 constexpr UINT kInitialFocusRecoveryMessage = WM_APP + 0x42;
+constexpr UINT_PTR kBorderlessVerificationTimer = 0xB4D;
+unsigned int g_borderlessVerificationTicks = 0;
 
 void TryResume(const char* trigger) {
     const bool clipReady = cursor_clip::HandleFocusGained(trigger);
@@ -89,6 +91,14 @@ LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM 
             cursor_clip::HandleWindowChanged(wParam == SIZE_MINIMIZED ? "WM_SIZE_MINIMIZED" : "WM_SIZE");
             if (wParam != SIZE_MINIMIZED) ResumeRawInputIfReady("WM_SIZE");
             break;
+        case WM_TIMER:
+            if (wParam == kBorderlessVerificationTimer) {
+                borderless_fullscreen::Apply(window, "verification_timer");
+                if (++g_borderlessVerificationTicks >= 20) {
+                    KillTimer(window, kBorderlessVerificationTimer);
+                }
+            }
+            break;
         case WM_DESTROY:
             HandleFocusLost();
             break;
@@ -145,6 +155,14 @@ bool EnsureInstalled(HWND window) {
     logger::Log("INFO", "GameWindow", "shared WndProc installed hwnd=0x%08lX",
                 reinterpret_cast<unsigned long>(window));
     borderless_fullscreen::Apply(window, "initialization");
+    if (g_settings.borderlessFullscreen) {
+        g_borderlessVerificationTicks = 0;
+        if (SetTimer(window, kBorderlessVerificationTimer, 250, nullptr) == 0) {
+            logger::Log("WARN", "GameWindow",
+                        "could not start borderless verification timer: error=%lu",
+                        GetLastError());
+        }
+    }
     cursor_clip::Initialize(g_settings.restoreCursorClip, window);
     if (g_settings.rawMouseInput) {
         if (!raw_input::AttachWindow(window)) {
