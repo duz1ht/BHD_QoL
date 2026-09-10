@@ -42,6 +42,10 @@ last valid game clip, and resumes only after the restored window is visible,
 unminimized, foreground, focused, and confined again. Absolute-device motion is
 ignored rather than treated as relative deltas.
 
+During startup, legacy polling remains active until Raw Input receives valid game-window
+focus for the first time. The window thread performs a guarded initial focus recovery so
+borderless initialization cannot leave the menu cursor waiting for an Alt+Tab cycle.
+
 
 ## Runtime configuration
 
@@ -50,6 +54,8 @@ Copy `dinput8.ini` next to `dfbhd.exe` and the compiled `dinput8.dll` to enable 
 ```ini
 [PatchGroups]
 DPIAware=1
+BorderlessFullscreen=0
+ForceDesktopResolution=0
 NVGResolution=1
 DynamicResolution=1
 ClipCursorFix=1
@@ -57,7 +63,7 @@ RawMouseInput=1
 RestoreCursorClip=1
 
 [Logging]
-Enabled=1
+Enabled=0
 RawInputStatisticsIntervalMs=5000
 ```
 
@@ -78,7 +84,29 @@ replace an awareness mode that is already configured (including Per-Monitor awar
 and an unavailable API is non-fatal. An executable manifest remains preferable when
 the game executable can be modified.
 
-`Logging.Enabled=1` creates a new automatically named
+`BorderlessFullscreen=1` forces the game's D3D8 windowed path, removes the caption,
+border, and resize frame, and covers the complete rectangle (not the work area) of the
+monitor nearest its initial window. `ForceDesktopResolution=0` preserves the resolution
+selected in game and stretches it to that window; setting it to `1` forces the internal
+render resolution to the monitor dimensions. Both options default to `0`, and
+`ForceDesktopResolution` is ignored when borderless fullscreen is disabled. Keep
+`DPIAware=1` enabled so Windows does not virtualize monitor coordinates.
+
+| BorderlessFullscreen | ForceDesktopResolution | Result |
+| --- | --- | --- |
+| `0` | either | Borderless mode is disabled and the resolution option is ignored. |
+| `1` | `0` | The selected in-game resolution is stretched to the monitor. |
+| `1` | `1` | The internal render resolution is changed to the monitor dimensions. |
+
+When logging is enabled, `BorderlessFullscreen active=1` confirms the popup style,
+window and client rectangles, and windowed-render state. The log reports the render
+resolution and output size separately and indicates whether scaling is active. When
+desktop resolution is forced, the feature also patches the supported executable's
+resolution setup before device creation; an executable signature mismatch disables only
+this feature. Until the game publishes a positive internal resolution, diagnostics show
+`render_resolution=unknown` rather than treating the startup `0x0` value as final.
+
+Logging is disabled by default. Set `Logging.Enabled=1` to create a new automatically named
 `BHD_QoL_<date>_<time>_<pid>.log` beside `dfbhd.exe` for every session. Every line
 is flushed immediately, so no DebugView installation is required and diagnostics
 normally survive a game crash. `RawInputStatisticsIntervalMs` controls only the

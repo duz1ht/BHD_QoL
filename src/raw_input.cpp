@@ -33,6 +33,8 @@ enum BackendState : LONG { kInactive = 0, kRecoveryPending = 1, kActive = 2 };
 volatile LONG g_backendState = kInactive;
 volatile LONG g_registered = 0;
 volatile LONG g_initializing = 0;
+volatile LONG g_activatedOnce = 0;
+volatile LONG g_startupLegacyFallbackLogged = 0;
 volatile LONG g_dropNextMovement = 0;
 volatile LONG g_droppedPackets = 0;
 volatile LONG g_reportCount = 0;
@@ -49,6 +51,13 @@ HWND g_window = nullptr;
 PollMouseInputFn g_legacyPoll = nullptr;
 HANDLE g_loggedDevices[16] = {};
 size_t g_loggedDeviceCount = 0;
+
+bool WindowHasInputFocus(HWND* focusedWindow = nullptr) {
+    const HWND focus = GetFocus();
+    if (focusedWindow != nullptr) *focusedWindow = focus;
+    return focus == g_window ||
+           (focus != nullptr && GetAncestor(focus, GA_ROOT) == g_window);
+}
 
 WPARAM CurrentState() {
     WPARAM state = static_cast<WPARAM>(InterlockedCompareExchange(&g_buttonState, 0, 0));
@@ -222,13 +231,20 @@ void SuspendInput() {
 }
 
 bool ResumeInput(const char* trigger, bool clipReady) {
+    HWND focusedWindow = nullptr;
+    const bool hasInputFocus = WindowHasInputFocus(&focusedWindow);
     if (!clipReady || g_window == nullptr || !IsWindow(g_window) ||
         !IsWindowVisible(g_window) || IsIconic(g_window) ||
-        GetForegroundWindow() != g_window || GetFocus() != g_window) {
+        GetForegroundWindow() != g_window || !hasInputFocus) {
         InterlockedExchange(&g_backendState, kRecoveryPending);
+        DWORD focusProcess = 0;
+        const DWORD focusThread = focusedWindow == nullptr
+            ? 0 : GetWindowThreadProcessId(focusedWindow, &focusProcess);
         logger::Log("INFO", "RawInput",
-                    "resume=deferred trigger=%s clip_ready=%d foreground=%d focus=%d visible=%d iconic=%d",
-                    trigger, clipReady, GetForegroundWindow() == g_window, GetFocus() == g_window,
+                    "resume=deferred trigger=%s clip_ready=%d foreground=%d focus=%d "
+                    "focus_hwnd=0x%08lX focus_thread=%lu focus_process=%lu visible=%d iconic=%d",
+                    trigger, clipReady, GetForegroundWindow() == g_window, hasInputFocus,
+                    reinterpret_cast<unsigned long>(focusedWindow), focusThread, focusProcess,
                     g_window && IsWindowVisible(g_window), g_window && IsIconic(g_window));
         return false;
     }
@@ -238,7 +254,12 @@ bool ResumeInput(const char* trigger, bool clipReady) {
     ClearInputState();
     InterlockedExchange(&g_dropNextMovement, 1);
     InterlockedExchange(&g_backendState, kActive);
+    const LONG activatedBefore = InterlockedExchange(&g_activatedOnce, 1);
     logger::Log("INFO", "RawInput", "resume=completed trigger=%s", trigger);
+    if (activatedBefore == 0 &&
+        InterlockedCompareExchange(&g_startupLegacyFallbackLogged, 0, 0) != 0) {
+        logger::Log("INFO", "RawInput", "startup fallback=raw_input");
+    }
     return true;
 }
 
@@ -280,7 +301,12 @@ void EnsureInitialized() {
 extern "C" void __cdecl RawPollMouseInput() {
     EnsureInitialized();
     if (InterlockedCompareExchange(&g_backendState, kInactive, kInactive) != kActive) {
-        if (g_window == nullptr) {
+        if (g_window == nullptr ||
+            InterlockedCompareExchange(&g_activatedOnce, 0, 0) == 0) {
+            if (g_window != nullptr &&
+                InterlockedCompareExchange(&g_startupLegacyFallbackLogged, 1, 0) == 0) {
+                logger::Log("INFO", "RawInput", "startup fallback=legacy");
+            }
             g_legacyPoll();
         } else {
             *reinterpret_cast<volatile LONG*>(kRelativeX) = 0;
