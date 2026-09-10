@@ -250,6 +250,9 @@ bool ResumeInput(const char* trigger, bool clipReady) {
                     g_window && IsWindowVisible(g_window), g_window && IsIconic(g_window));
         return false;
     }
+    if (InterlockedCompareExchange(&g_backendState, kInactive, kInactive) == kActive) {
+        return true;
+    }
     ClearInputState();
     InterlockedExchange(&g_dropNextMovement, 1);
     InterlockedExchange(&g_backendState, kActive);

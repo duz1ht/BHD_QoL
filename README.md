@@ -95,6 +95,10 @@ cursor is outside the game client area, `can_escape=yes` means the current clip
 permits that movement, and `on_other_monitor=1` confirms that the cursor is on a
 different monitor from the game window.
 
+Focus and cursor recovery are transition-based: repeated Windows activation,
+focus, size, or display notifications do not reapply an already-valid clip or
+restart an already-active Raw Input backend.
+
 ## Knowledge_Base policy
 
 The `Knowledge_Base/` directory is a read-only reference area for LLM agents such as Codex. It may contain code, examples, or material extracted from other projects so that maintainers and agents can study that knowledge and use it as a basis for implementing changes in the main project tree.

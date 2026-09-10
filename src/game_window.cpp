@@ -16,7 +16,15 @@ constexpr uintptr_t kGameWindow = 0x00F654FC;
 
 void TryResume(const char* trigger) {
     const bool clipReady = cursor_clip::HandleFocusGained(trigger);
-    if (g_settings.rawMouseInput) raw_input::HandleFocusGained(trigger, clipReady);
+    if (g_settings.rawMouseInput && clipReady) {
+        raw_input::HandleFocusGained(trigger, true);
+    }
+}
+
+void ResumeRawInputIfReady(const char* trigger) {
+    if (g_settings.rawMouseInput && cursor_clip::IsReady()) {
+        raw_input::HandleFocusGained(trigger, true);
+    }
 }
 
 void HandleFocusLost() {
@@ -48,11 +56,11 @@ LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM 
         case WM_MOVE:
         case WM_DISPLAYCHANGE:
             cursor_clip::HandleWindowChanged(message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
-            TryResume(message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
+            ResumeRawInputIfReady(message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
             break;
         case WM_SIZE:
             cursor_clip::HandleWindowChanged(wParam == SIZE_MINIMIZED ? "WM_SIZE_MINIMIZED" : "WM_SIZE");
-            if (wParam != SIZE_MINIMIZED) TryResume("WM_SIZE");
+            if (wParam != SIZE_MINIMIZED) ResumeRawInputIfReady("WM_SIZE");
             break;
         case WM_DESTROY:
             HandleFocusLost();

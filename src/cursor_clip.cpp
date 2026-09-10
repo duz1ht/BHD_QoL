@@ -13,6 +13,7 @@ constexpr uintptr_t kScreenHeight = 0x009F72C4;
 bool g_enabled = false;
 bool g_ready = false;
 bool g_recoveryPending = false;
+bool g_focusSuspended = false;
 HWND g_window = nullptr;
 RECT g_lastValidClip = {};
 bool g_hasLastValidClip = false;
@@ -155,6 +156,7 @@ bool TryRecover(const char* trigger) {
     g_hasLastValidClip = true;
     g_recoveryPending = false;
     g_ready = true;
+    g_focusSuspended = false;
     LogSnapshot("after_recovery");
     return true;
 }
@@ -165,6 +167,7 @@ void Initialize(bool enabled, HWND window) {
     g_window = window;
     g_ready = !enabled;
     g_recoveryPending = enabled;
+    g_focusSuspended = false;
     logger::Log("INFO", "RestoreCursorClip", "feature %s", enabled ? "enabled" : "disabled");
     if (enabled) {
         LogSnapshot("initialization");
@@ -173,7 +176,8 @@ void Initialize(bool enabled, HWND window) {
 }
 
 void HandleFocusLost() {
-    if (!g_enabled) return;
+    if (!g_enabled || g_focusSuspended) return;
+    g_focusSuspended = true;
     g_ready = false;
     g_recoveryPending = false;
     LogSnapshot("before_focus_loss");
@@ -190,7 +194,7 @@ void HandleFocusLost() {
 
 bool HandleFocusGained(const char* trigger) {
     if (!g_enabled) return true;
-    g_recoveryPending = true;
+    if (!g_ready) g_recoveryPending = true;
     return TryRecover(trigger);
 }
 
@@ -203,6 +207,7 @@ void HandleWindowChanged(const char* trigger) {
 void Shutdown() {
     g_ready = false;
     g_recoveryPending = false;
+    g_focusSuspended = false;
     g_window = nullptr;
 }
 
