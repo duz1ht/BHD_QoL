@@ -35,9 +35,10 @@ dispatcher, preserving its bindings, sensitivity, inversion, and action pipeline
 
 The backend validates the original bytes before installing its detour and keeps a
 trampoline to the original polling function as a fallback until Raw Input has been
-registered successfully. It clears pending input on focus changes, releases and
-restores an active cursor clip around Alt-Tab, and ignores absolute-device motion
-rather than treating absolute coordinates as relative deltas.
+registered successfully. It clears pending input on focus changes, preserves the
+last valid game clip, and resumes only after the restored window is visible,
+unminimized, foreground, focused, and confined again. Absolute-device motion is
+ignored rather than treated as relative deltas.
 
 
 ## Runtime configuration
@@ -69,10 +70,13 @@ The log records the effective configuration, executable validation, every patch
 result, Raw Input registration and fallback, button and wheel transitions, focus
 changes, and periodic movement statistics. Cursor snapshots compare the game
 client rectangle, current `ClipCursor` rectangle, virtual desktop, physical cursor
-position, foreground/focus state, visibility and minimization. A snapshot reports
-`confined_to_game`, `confined_to_other_rect`, `not_confined`, or
-`clip_query_failed`, plus `escaped=1` when the physical cursor is outside the game
-client area.
+position, per-monitor bounds, foreground/focus state, visibility, minimization,
+and the game's internal resolution. A snapshot distinguishes
+`confined_to_full_client`, `confined_inside_client`, `confined_to_other_rect`,
+`not_confined`, and `clip_query_failed`. `outside_client=1` means the physical
+cursor is outside the game client area, `can_escape=yes` means the current clip
+permits that movement, and `on_other_monitor=1` confirms that the cursor is on a
+different monitor from the game window.
 
 ## Knowledge_Base policy
 

@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 
 #include "logger.h"
@@ -36,7 +37,9 @@ struct MouseEvent {
 volatile LONG g_accumX = 0;
 volatile LONG g_accumY = 0;
 volatile LONG g_buttonState = 0;
-volatile LONG g_active = 0;
+enum BackendState : LONG { kInactive = 0, kRecoveryPending = 1, kActive = 2 };
+volatile LONG g_backendState = kInactive;
+volatile LONG g_registered = 0;
 volatile LONG g_initializing = 0;
 volatile LONG g_dropNextMovement = 0;
 volatile LONG g_droppedPackets = 0;
@@ -57,8 +60,9 @@ CRITICAL_SECTION g_eventLock;
 MouseEvent g_events[kEventCapacity] = {};
 size_t g_eventRead = 0;
 size_t g_eventWrite = 0;
-RECT g_savedClip = {};
-bool g_restoreClip = false;
+RECT g_lastValidGameClip = {};
+bool g_hasLastValidGameClip = false;
+LONG g_lastOnOtherMonitor = -1;
 HANDLE g_loggedDevices[16] = {};
 size_t g_loggedDeviceCount = 0;
 
@@ -143,23 +147,35 @@ void SetButton(USHORT flags, USHORT downFlag, USHORT upFlag, LONG stateBit,
     }
 }
 
+bool GetClientScreenRect(RECT* result) {
+    if (result == nullptr || g_window == nullptr || !IsWindow(g_window)) return false;
+    RECT client = {};
+    if (!GetClientRect(g_window, &client)) return false;
+    POINT upperLeft = {client.left, client.top};
+    POINT lowerRight = {client.right, client.bottom};
+    if (!ClientToScreen(g_window, &upperLeft) || !ClientToScreen(g_window, &lowerRight)) return false;
+    *result = {upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y};
+    return !IsRectEmpty(result);
+}
+
+bool ClipIsContainedBy(const RECT& clip, const RECT& bounds) {
+    return !IsRectEmpty(&clip) && clip.left >= bounds.left && clip.top >= bounds.top &&
+           clip.right <= bounds.right && clip.bottom <= bounds.bottom;
+}
+
+bool WindowReadyForInput() {
+    return g_window != nullptr && IsWindow(g_window) && IsWindowVisible(g_window) &&
+           !IsIconic(g_window) && GetForegroundWindow() == g_window && GetFocus() == g_window;
+}
+
 void LogCursorSnapshot(const char* trigger) {
     if (g_window == nullptr || !IsWindow(g_window)) {
         logger::Log("WARN", "CursorClip", "trigger=%s status=window_invalid", trigger);
         return;
     }
 
-    RECT client = {};
-    POINT upperLeft = {};
-    POINT lowerRight = {};
-    const bool clientValid = GetClientRect(g_window, &client) != FALSE;
-    upperLeft.x = client.left;
-    upperLeft.y = client.top;
-    lowerRight.x = client.right;
-    lowerRight.y = client.bottom;
-    const bool converted = clientValid && ClientToScreen(g_window, &upperLeft) &&
-                           ClientToScreen(g_window, &lowerRight);
-    RECT clientScreen = {upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y};
+    RECT clientScreen = {};
+    const bool converted = GetClientScreenRect(&clientScreen);
     RECT clip = {};
     POINT cursor = {};
     const bool clipValid = GetClipCursor(&clip) != FALSE;
@@ -171,33 +187,69 @@ void LogCursorSnapshot(const char* trigger) {
     const char* status = "clip_query_failed";
     const char* canEscape = "unknown";
     if (clipValid && converted) {
-        const bool containedByClient = clip.left >= clientScreen.left &&
-                                       clip.top >= clientScreen.top &&
-                                       clip.right <= clientScreen.right &&
-                                       clip.bottom <= clientScreen.bottom &&
-                                       !IsRectEmpty(&clip);
-        if (containedByClient) {
-            status = "confined_to_game";
-            canEscape = "no";
-        } else if (EqualRect(&clip, &desktop)) {
+        const bool containedByClient = ClipIsContainedBy(clip, clientScreen);
+        if (EqualRect(&clip, &desktop)) {
             status = "not_confined";
             canEscape = "yes";
+        } else if (containedByClient) {
+            const bool fullClient = std::abs(clip.left - clientScreen.left) <= 1 &&
+                                    std::abs(clip.top - clientScreen.top) <= 1 &&
+                                    std::abs(clip.right - clientScreen.right) <= 1 &&
+                                    std::abs(clip.bottom - clientScreen.bottom) <= 1;
+            status = fullClient ? "confined_to_full_client" : "confined_inside_client";
+            canEscape = "no";
+            if (!IsIconic(g_window)) {
+                g_lastValidGameClip = clip;
+                g_hasLastValidGameClip = true;
+            }
         } else {
             status = "confined_to_other_rect";
             canEscape = "yes";
         }
     }
     const bool focused = GetForegroundWindow() == g_window && GetFocus() == g_window;
-    const bool escaped = cursorValid && converted && !PtInRect(&clientScreen, cursor);
-    logger::Log(escaped && focused ? "WARN" : "INFO", "CursorClip",
+    const bool outsideClient = cursorValid && converted && !PtInRect(&clientScreen, cursor);
+    const HMONITOR gameMonitor = MonitorFromWindow(g_window, MONITOR_DEFAULTTONULL);
+    const HMONITOR cursorMonitor = cursorValid ? MonitorFromPoint(cursor, MONITOR_DEFAULTTONULL) : nullptr;
+    MONITORINFOEXA gameInfo = {};
+    MONITORINFOEXA cursorInfo = {};
+    gameInfo.cbSize = sizeof(gameInfo);
+    cursorInfo.cbSize = sizeof(cursorInfo);
+    const bool gameMonitorValid =
+        gameMonitor != nullptr &&
+        GetMonitorInfoA(gameMonitor, reinterpret_cast<MONITORINFO*>(&gameInfo));
+    const bool cursorMonitorValid =
+        cursorMonitor != nullptr &&
+        GetMonitorInfoA(cursorMonitor, reinterpret_cast<MONITORINFO*>(&cursorInfo));
+    const LONG onOtherMonitor = gameMonitorValid && cursorMonitorValid
+                                    ? (gameMonitor != cursorMonitor ? 1 : 0)
+                                    : -1;
+    const bool monitorTransition = onOtherMonitor == 1 && g_lastOnOtherMonitor != 1;
+    g_lastOnOtherMonitor = onOtherMonitor;
+    const LONG internalWidth = *reinterpret_cast<volatile LONG*>(kScreenWidth);
+    const LONG internalHeight = *reinterpret_cast<volatile LONG*>(kScreenHeight);
+    logger::Log((outsideClient && focused) || monitorTransition ? "WARN" : "INFO", "CursorClip",
                 "trigger=%s status=%s can_escape=%s client=(%ld,%ld)-(%ld,%ld) clip=(%ld,%ld)-(%ld,%ld) "
-                "desktop=(%ld,%ld)-(%ld,%ld) cursor=(%ld,%ld) escaped=%d foreground=%d "
-                "focus=%d visible=%d iconic=%d",
+                "desktop=(%ld,%ld)-(%ld,%ld) cursor=(%ld,%ld) outside_client=%d foreground=%d "
+                "focus=%d visible=%d iconic=%d internal_resolution=%ldx%ld "
+                "game_monitor=%s game_monitor_rect=(%ld,%ld)-(%ld,%ld) "
+                "game_work=(%ld,%ld)-(%ld,%ld) game_primary=%d "
+                "cursor_monitor=%s cursor_monitor_rect=(%ld,%ld)-(%ld,%ld) "
+                "cursor_work=(%ld,%ld)-(%ld,%ld) cursor_primary=%d on_other_monitor=%ld",
                 trigger, status, canEscape, clientScreen.left, clientScreen.top, clientScreen.right,
                 clientScreen.bottom, clip.left, clip.top, clip.right, clip.bottom, desktop.left,
-                desktop.top, desktop.right, desktop.bottom, cursor.x, cursor.y, escaped,
+                desktop.top, desktop.right, desktop.bottom, cursor.x, cursor.y, outsideClient,
                 GetForegroundWindow() == g_window, GetFocus() == g_window,
-                IsWindowVisible(g_window), IsIconic(g_window));
+                IsWindowVisible(g_window), IsIconic(g_window), internalWidth, internalHeight,
+                gameMonitorValid ? gameInfo.szDevice : "unknown", gameInfo.rcMonitor.left,
+                gameInfo.rcMonitor.top, gameInfo.rcMonitor.right, gameInfo.rcMonitor.bottom,
+                gameInfo.rcWork.left, gameInfo.rcWork.top, gameInfo.rcWork.right,
+                gameInfo.rcWork.bottom, (gameInfo.dwFlags & MONITORINFOF_PRIMARY) != 0,
+                cursorMonitorValid ? cursorInfo.szDevice : "unknown", cursorInfo.rcMonitor.left,
+                cursorInfo.rcMonitor.top, cursorInfo.rcMonitor.right, cursorInfo.rcMonitor.bottom,
+                cursorInfo.rcWork.left, cursorInfo.rcWork.top, cursorInfo.rcWork.right,
+                cursorInfo.rcWork.bottom, (cursorInfo.dwFlags & MONITORINFOF_PRIMARY) != 0,
+                onOtherMonitor);
 }
 
 void LogDevice(HANDLE device) {
@@ -250,7 +302,8 @@ void ProcessRawInput(HRAWINPUT handle) {
     const UINT read = GetRawInputData(handle, RID_INPUT, buffer, &size, sizeof(RAWINPUTHEADER));
     if (read == size) {
         const RAWINPUT* input = reinterpret_cast<const RAWINPUT*>(buffer);
-        if (input->header.dwType == RIM_TYPEMOUSE && InterlockedCompareExchange(&g_active, 0, 0)) {
+        if (input->header.dwType == RIM_TYPEMOUSE &&
+            InterlockedCompareExchange(&g_backendState, kInactive, kInactive) == kActive) {
             LogDevice(input->header.hDevice);
             InterlockedIncrement(&g_reportCount);
             const RAWMOUSE& mouse = input->data.mouse;
@@ -289,43 +342,95 @@ void ProcessRawInput(HRAWINPUT handle) {
 }
 
 void LoseFocus() {
-    if (InterlockedExchange(&g_active, 0) == 0) return;
+    if (InterlockedExchange(&g_backendState, kInactive) == kInactive) return;
     logger::Log("INFO", "Focus", "focus lost; Raw Input suspended and state cleared");
     LogCursorSnapshot("before_focus_loss");
     ClearInputState();
-    g_restoreClip = false;
-    RECT clip = {};
+    RECT currentClip = {};
     RECT desktop = {GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN),
                     GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN),
                     GetSystemMetrics(SM_YVIRTUALSCREEN) + GetSystemMetrics(SM_CYVIRTUALSCREEN)};
-    if (GetClipCursor(&clip) && !EqualRect(&clip, &desktop)) {
-        g_savedClip = clip;
-        g_restoreClip = true;
-        const BOOL released = ClipCursor(nullptr);
-        logger::Log(released ? "INFO" : "ERROR", "CursorClip",
-                    "source=raw_input operation=release result=%d error=%lu", released,
-                    released ? 0 : GetLastError());
+    if (GetClipCursor(&currentClip) && EqualRect(&currentClip, &desktop) &&
+        g_hasLastValidGameClip) {
+        logger::Log("INFO", "CursorClip",
+                    "clip_released_before_focus_notification=1; last_valid=(%ld,%ld)-(%ld,%ld)",
+                    g_lastValidGameClip.left, g_lastValidGameClip.top,
+                    g_lastValidGameClip.right, g_lastValidGameClip.bottom);
     }
+    const BOOL released = ClipCursor(nullptr);
+    logger::Log(released ? "INFO" : "ERROR", "CursorClip",
+                "source=raw_input operation=release result=%d error=%lu", released,
+                released ? 0 : GetLastError());
     LogCursorSnapshot("after_focus_loss");
 }
 
-void GainFocus() {
-    if (InterlockedCompareExchange(&g_active, 0, 0) != 0) return;
+bool TryCompleteFocusRecovery(const char* trigger) {
+    if (InterlockedCompareExchange(&g_backendState, kInactive, kInactive) != kRecoveryPending) {
+        return false;
+    }
+    if (!WindowReadyForInput()) {
+        logger::Log("INFO", "Focus",
+                    "focus_recovery=deferred trigger=%s foreground=%d focus=%d visible=%d iconic=%d",
+                    trigger, GetForegroundWindow() == g_window, GetFocus() == g_window,
+                    g_window != nullptr && IsWindowVisible(g_window),
+                    g_window != nullptr && IsIconic(g_window));
+        return false;
+    }
+
+    RECT requested = {};
+    const char* source = "recalculated_client";
+    if (!GetClientScreenRect(&requested)) {
+        if (!g_hasLastValidGameClip) {
+            logger::Log("ERROR", "CursorClip", "focus recovery has no valid clip rectangle");
+            return false;
+        }
+        requested = g_lastValidGameClip;
+        source = "last_valid_clip";
+    }
+
+    SetLastError(0);
+    const BOOL applied = ClipCursor(&requested);
+    const DWORD applyError = applied ? ERROR_SUCCESS : GetLastError();
+    RECT confirmed = {};
+    RECT client = {};
+    const bool confirmedValid = applied && GetClipCursor(&confirmed) &&
+                                GetClientScreenRect(&client) &&
+                                ClipIsContainedBy(confirmed, client);
+    logger::Log(confirmedValid ? "INFO" : "ERROR", "CursorClip",
+                "operation=restore restore_source=%s requested=(%ld,%ld)-(%ld,%ld) "
+                "confirmed=(%ld,%ld)-(%ld,%ld) result=%d error=%lu",
+                source, requested.left, requested.top, requested.right, requested.bottom,
+                confirmed.left, confirmed.top, confirmed.right, confirmed.bottom,
+                confirmedValid, applyError);
+    if (!confirmedValid) return false;
+
+    g_lastValidGameClip = confirmed;
+    g_hasLastValidGameClip = true;
     ClearInputState();
     InterlockedExchange(&g_dropNextMovement, 1);
-    if (g_restoreClip && IsWindowVisible(g_window) && !IsIconic(g_window)) {
-        const BOOL restored = ClipCursor(&g_savedClip);
-        logger::Log(restored ? "INFO" : "ERROR", "CursorClip",
-                    "source=raw_input operation=restore rect=(%ld,%ld)-(%ld,%ld) result=%d error=%lu",
-                    g_savedClip.left, g_savedClip.top, g_savedClip.right, g_savedClip.bottom,
-                    restored, restored ? 0 : GetLastError());
+    InterlockedExchange(&g_backendState, kActive);
+    logger::Log("INFO", "Focus", "focus_recovery=completed trigger=%s; Raw Input resumed", trigger);
+    LogCursorSnapshot("after_focus_recovery");
+    return true;
+}
+
+void RequestFocusRecovery(const char* trigger) {
+    if (InterlockedCompareExchange(&g_backendState, kInactive, kInactive) == kActive) {
+        RECT client = {};
+        RECT clip = {};
+        if (GetClientScreenRect(&client) && GetClipCursor(&clip) &&
+            ClipIsContainedBy(clip, client)) {
+            return;
+        }
+        logger::Log("WARN", "CursorClip",
+                    "active backend lost valid confinement; recovery requested by %s", trigger);
     }
-    InterlockedExchange(&g_active, 1);
-    logger::Log("INFO", "Focus", "focus gained; Raw Input resumed");
-    LogCursorSnapshot("after_focus_gain");
+    InterlockedExchange(&g_backendState, kRecoveryPending);
+    TryCompleteFocusRecovery(trigger);
 }
 
 void UnregisterRawInput() {
+    if (InterlockedExchange(&g_registered, 0) == 0) return;
     RAWINPUTDEVICE device = {0x01, 0x02, RIDEV_REMOVE, nullptr};
     const BOOL result = RegisterRawInputDevices(&device, 1, sizeof(device));
     logger::Log(result ? "INFO" : "ERROR", "RawInput", "unregister result=%d error=%lu", result,
@@ -333,38 +438,48 @@ void UnregisterRawInput() {
 }
 
 LRESULT CALLBACK RawInputWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (message == WM_INPUT) {
+        ProcessRawInput(reinterpret_cast<HRAWINPUT>(lParam));
+        return DefWindowProcW(window, message, wParam, lParam);
+    }
+
+    const LRESULT result = CallWindowProcW(g_originalWndProc, window, message, wParam, lParam);
     switch (message) {
-        case WM_INPUT:
-            ProcessRawInput(reinterpret_cast<HRAWINPUT>(lParam));
-            return DefWindowProcW(window, message, wParam, lParam);
         case WM_ACTIVATEAPP:
-            wParam ? GainFocus() : LoseFocus();
+            wParam ? RequestFocusRecovery("WM_ACTIVATEAPP") : LoseFocus();
             break;
         case WM_ACTIVATE:
-            LOWORD(wParam) == WA_INACTIVE ? LoseFocus() : GainFocus();
+            LOWORD(wParam) == WA_INACTIVE ? LoseFocus() : RequestFocusRecovery("WM_ACTIVATE");
             break;
         case WM_SETFOCUS:
-            GainFocus();
+            RequestFocusRecovery("WM_SETFOCUS");
             break;
         case WM_KILLFOCUS:
             LoseFocus();
             break;
         case WM_DESTROY:
+            InterlockedExchange(&g_backendState, kInactive);
+            ClearInputState();
+            break;
         case WM_NCDESTROY:
-            InterlockedExchange(&g_active, 0);
+            InterlockedExchange(&g_backendState, kInactive);
             UnregisterRawInput();
+            g_window = nullptr;
             break;
         case WM_MOVE:
             LogCursorSnapshot("WM_MOVE");
+            RequestFocusRecovery("WM_MOVE");
             break;
         case WM_SIZE:
             LogCursorSnapshot(wParam == SIZE_MINIMIZED ? "WM_SIZE_MINIMIZED" : "WM_SIZE");
+            if (wParam != SIZE_MINIMIZED) RequestFocusRecovery("WM_SIZE");
             break;
         case WM_DISPLAYCHANGE:
             LogCursorSnapshot("WM_DISPLAYCHANGE");
+            RequestFocusRecovery("WM_DISPLAYCHANGE");
             break;
     }
-    return CallWindowProcW(g_originalWndProc, window, message, wParam, lParam);
+    return result;
 }
 
 bool InitializeForWindow(HWND window) {
@@ -409,10 +524,14 @@ bool InitializeForWindow(HWND window) {
         return false;
     }
 
+    InterlockedExchange(&g_registered, 1);
     InterlockedExchange(&g_dropNextMovement, 1);
-    InterlockedExchange(&g_active, 1);
-    logger::Log("INFO", "RawInput", "registered flags=RIDEV_NOLEGACY|RIDEV_CAPTUREMOUSE; active=1");
+    InterlockedExchange(&g_backendState, kRecoveryPending);
+    logger::Log("INFO", "RawInput",
+                "registered flags=RIDEV_NOLEGACY|RIDEV_CAPTUREMOUSE; state=%s",
+                "recovery_pending");
     LogCursorSnapshot("initialization");
+    TryCompleteFocusRecovery("initialization");
     return true;
 }
 
@@ -440,7 +559,7 @@ void DrainEvents() {
 
 extern "C" void __cdecl RawPollMouseInput() {
     EnsureInitialized();
-    if (InterlockedCompareExchange(&g_active, 0, 0) == 0) {
+    if (InterlockedCompareExchange(&g_backendState, kInactive, kInactive) != kActive) {
         if (g_window == nullptr) {
             g_legacyPoll();
         } else {
@@ -476,8 +595,9 @@ extern "C" void __cdecl RawPollMouseInput() {
                     "absolute_ignored=%ld size_failures=%ld read_failures=%ld queue_overflows=%ld active=%ld",
                     g_statisticsIntervalMs, reports, polls, totalX, totalY, dropped, absolute,
                     sizeFailures, readFailures, overflows,
-                    InterlockedCompareExchange(&g_active, 0, 0));
+                    InterlockedCompareExchange(&g_backendState, kInactive, kInactive) == kActive);
         LogCursorSnapshot("statistics_interval");
+        RequestFocusRecovery("statistics_interval");
     }
 }
 
