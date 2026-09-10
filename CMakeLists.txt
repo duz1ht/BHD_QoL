@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.15)
 project(BHD_QoL_DInput8 LANGUAGES CXX)
 
-add_library(dinput8 SHARED src/dinput8.cpp src/logger.cpp src/raw_input.cpp src/dinput8.def)
+add_library(dinput8 SHARED src/dinput8.cpp src/logger.cpp src/game_window.cpp
+    src/cursor_clip.cpp src/raw_input.cpp src/dinput8.def)
 target_compile_features(dinput8 PRIVATE cxx_std_17)
 
 if(NOT WIN32)

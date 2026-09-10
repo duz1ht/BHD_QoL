@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "logger.h"
+#include "game_window.h"
 #include "raw_input.h"
 
 namespace {
@@ -25,6 +26,7 @@ struct PatchConfig {
     bool dynamicResolution = true;
     bool clipCursorFix = true;
     bool rawMouseInput = true;
+    bool restoreCursorClip = true;
     bool loggingEnabled = true;
     unsigned long rawInputStatisticsIntervalMs = 5000;
     bool invalidStatisticsInterval = false;
@@ -236,6 +238,8 @@ PatchConfig LoadPatchConfig() {
     config.dynamicResolution = BoolFromIni(iniPath, L"DynamicResolution", config.dynamicResolution);
     config.clipCursorFix = BoolFromIni(iniPath, L"ClipCursorFix", config.clipCursorFix);
     config.rawMouseInput = BoolFromIni(iniPath, L"RawMouseInput", config.rawMouseInput);
+    config.restoreCursorClip =
+        BoolFromIni(iniPath, L"RestoreCursorClip", config.restoreCursorClip);
     config.loggingEnabled =
         GetPrivateProfileIntW(L"Logging", L"Enabled", config.loggingEnabled ? 1 : 0, iniPath) != 0;
     const int interval = GetPrivateProfileIntW(L"Logging", L"RawInputStatisticsIntervalMs",
@@ -252,9 +256,11 @@ void ApplyBhdPatches() {
     logger::Initialize(config.loggingEnabled);
     logger::Log("INFO", "Config",
                 "NVGResolution=%d DynamicResolution=%d ClipCursorFix=%d RawMouseInput=%d "
+                "RestoreCursorClip=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.nvgResolution, config.dynamicResolution, config.clipCursorFix,
-                config.rawMouseInput, config.rawInputStatisticsIntervalMs);
+                config.rawMouseInput, config.restoreCursorClip,
+                config.rawInputStatisticsIntervalMs);
     if (config.invalidStatisticsInterval) {
         logger::Log("WARN", "Config",
                     "invalid RawInputStatisticsIntervalMs; using default 5000");
@@ -292,7 +298,10 @@ void ApplyBhdPatches() {
     } else {
         logger::Log("INFO", "ClipCursorFix", "feature disabled");
     }
-    raw_input::Install({config.rawMouseInput, config.rawInputStatisticsIntervalMs});
+    const bool rawInstalled =
+        raw_input::Install({config.rawMouseInput, config.rawInputStatisticsIntervalMs});
+    game_window::Configure(
+        {config.rawMouseInput && rawInstalled, config.restoreCursorClip});
 }
 
 HMODULE LoadRealDInput8() {
