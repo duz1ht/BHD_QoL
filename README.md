@@ -30,8 +30,10 @@ The optional Raw Input backend hooks the supported build's `PollMouseInput()` at
 movement into the game's existing delta fields. `RIDEV_CAPTUREMOUSE` prevents a
 mouse click from activating another window; it does not confine the physical
 cursor to the game window.
-Raw button and wheel transitions are sent directly through the game's mouse
-dispatcher, preserving its bindings, sensitivity, inversion, and action pipeline.
+Raw button and wheel transitions are sent immediately from the window's
+`WM_INPUT` handler through the game's mouse dispatcher, so clicks are delivered
+even in menus and modal interfaces that do not call `PollMouseInput()`. This
+preserves the game's bindings, sensitivity, inversion, and action pipeline.
 
 The backend validates the original bytes before installing its detour and keeps a
 trampoline to the original polling function as a fallback until Raw Input has been
