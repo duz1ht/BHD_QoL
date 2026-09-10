@@ -85,6 +85,11 @@ border, and resize frame and covers the monitor's complete rectangle (not its wo
 area). It is disabled by default. Keep `DPIAware=1` enabled so Windows does not
 virtualize monitor coordinates.
 
+When logging is enabled, `FullscreenBorderless active=1` confirms that the popup style,
+window and client rectangles, windowed-render state, and internal resolution all match
+the selected monitor. The feature patches the supported executable's resolution setup
+before device creation; an executable signature mismatch disables only this feature.
+
 Logging is disabled by default. Set `Logging.Enabled=1` to create a new automatically named
 `BHD_QoL_<date>_<time>_<pid>.log` beside `dfbhd.exe` for every session. Every line
 is flushed immediately, so no DebugView installation is required and diagnostics
