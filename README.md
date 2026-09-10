@@ -12,12 +12,11 @@ The DLL patches `SetupNVGViewPort()` at process attach time to increase the nigh
 | `0052A94C` | `MOV [00E0498C],0x200` | `MOV [00E0498C],0x800` |
 | `0052A956` | `MOV [00E04990],0x100` | `MOV [00E04990],0x400` |
 
-The DLL also installs dynamic-resolution cursor and viewport hooks:
+The DLL also installs dynamic-resolution viewport hooks:
 
 | Address | Original | Patched | Purpose |
 | --- | --- | --- | --- |
 | `004BC711` | `MOV DWORD PTR [009FB3D8],EBX` | `JMP 005E4879` | Compute additional resolution values in `LoadingGame()` |
-| `00567972` | `ADD EAX,0xF0` | `JMP 005E48C0` | Include dynamic resolutions in `PollMouseInput()` cursor positioning |
 | `004623D2` | `MOV DWORD PTR [EBP + -0x8],0x27F` | `JMP 005E4912` | Include dynamic resolutions in `InitializeInGameSystems()` ClipCursor setup |
 | `004628D3` | `MOV DWORD PTR [EBP + -0x8],0x27F` | `JMP 005E492B` | Include dynamic resolutions in `ClipCursorToViewPort()` |
 
@@ -32,7 +31,6 @@ Copy `dinput8.ini` next to `dfbhd.exe` and the compiled `dinput8.dll` to enable 
 [PatchGroups]
 NVGResolution=1
 DynamicResolution=1
-MouseCursorFix=1
 ClipCursorFix=1
 
 [Debug]

@@ -12,10 +12,11 @@ constexpr uintptr_t kPatchAddressMovEax = 0x52A934;
 constexpr uintptr_t kPatchAddressWidthStore = 0x52A94C;
 constexpr uintptr_t kPatchAddressHeightStore = 0x52A956;
 constexpr uintptr_t kPatchAddressLoadingGameDynamicResolution = 0x4BC711;
-constexpr uintptr_t kPatchAddressPollMouseInputCursorPosition = 0x567972;
 constexpr uintptr_t kPatchAddressInitializeInGameSystemsClipCursor = 0x4623D2;
 constexpr uintptr_t kPatchAddressClipCursorToViewPort = 0x4628D3;
 constexpr uintptr_t kDynamicResolutionCodeCave = 0x5E4879;
+constexpr uintptr_t kInitialClipCursorCodeCave = 0x5E4912;
+constexpr uintptr_t kClipCursorCodeCave = 0x5E492B;
 
 HMODULE g_realDInput8 = nullptr;
 HANDLE g_recoveryStopEvent = nullptr;
@@ -24,7 +25,6 @@ bool g_logAppliedPatches = false;
 struct PatchConfig {
     bool nvgResolution = true;
     bool dynamicResolution = true;
-    bool mouseCursorFix = true;
     bool clipCursorFix = true;
     bool restoreCursorClip = true;
     bool waitForDisplayChange = true;
@@ -61,24 +61,23 @@ const unsigned char kDynamicResolutionCodeCaveBytes[] = {
     0x9F, 0x00, 0xD1, 0xFB, 0x89, 0x1D, 0x26, 0xC3, 0x60, 0x00, 0x8B, 0x1D,
     0xC0, 0x72, 0x9F, 0x00, 0xD1, 0xFB, 0xF7, 0xDB, 0x89, 0x1D, 0x2B, 0xC3,
     0x60, 0x00, 0x8B, 0x1D, 0xC4, 0x72, 0x9F, 0x00, 0xD1, 0xFB, 0xF7, 0xDB,
-    0x89, 0x1D, 0x30, 0xC3, 0x60, 0x00, 0xE9, 0x57, 0x7E, 0xED, 0xFF, 0x03,
-    0x05, 0x26, 0xC3, 0x60, 0x00, 0x50, 0x03, 0x0D, 0x22, 0xC3, 0x60, 0x00,
-    0x51, 0xFF, 0x15, 0xD8, 0x12, 0x61, 0x00, 0x8B, 0x15, 0xE0, 0x55, 0xF6,
-    0x00, 0x8B, 0x05, 0xE4, 0x55, 0xF6, 0x00, 0x03, 0x15, 0x2B, 0xC3, 0x60,
-    0x00, 0x03, 0x05, 0x30, 0xC3, 0x60, 0x00, 0x89, 0x15, 0xEC, 0x55, 0xF6,
-    0x00, 0xA3, 0xF0, 0x55, 0xF6, 0x00, 0x8B, 0x05, 0x22, 0xC3, 0x60, 0x00,
-    0xA3, 0xE0, 0x55, 0xF6, 0x00, 0x8B, 0x05, 0x26, 0xC3, 0x60, 0x00, 0xA3,
-    0xE4, 0x55, 0xF6, 0x00, 0xE9, 0xA8, 0x30, 0xF8, 0xFF, 0x8B, 0x05, 0xC0,
+    0x89, 0x1D, 0x30, 0xC3, 0x60, 0x00, 0xE9, 0x57, 0x7E, 0xED, 0xFF,
+};
+
+const unsigned char kInitialClipCursorCodeCaveBytes[] = {
+    0x8B, 0x05, 0xC0,
     0x72, 0x9F, 0x00, 0x48, 0x89, 0x45, 0xF8, 0x8B, 0x05, 0xC4, 0x72, 0x9F,
-    0x00, 0x48, 0x89, 0x45, 0xFC, 0xE9, 0xAC, 0xDA, 0xE7, 0xFF, 0x8B, 0x05,
-    0xC0, 0x72, 0x9F, 0x00, 0x48, 0x89, 0x45, 0xF8, 0x8B, 0x05, 0xC4, 0x72,
-    0x9F, 0x00, 0x48, 0x89, 0x45, 0xFC, 0xE9, 0x9D, 0xDF, 0xE7, 0xFF,
+    0x00, 0x48, 0x89, 0x45, 0xFC, 0xE9, 0xAC, 0xDA, 0xE7, 0xFF,
+};
+
+const unsigned char kClipCursorCodeCaveBytes[] = {
+    0x8B, 0x05, 0xC0, 0x72, 0x9F, 0x00, 0x48, 0x89, 0x45, 0xF8, 0x8B, 0x05,
+    0xC4, 0x72, 0x9F, 0x00, 0x48, 0x89, 0x45, 0xFC, 0xE9, 0x9D, 0xDF, 0xE7,
+    0xFF,
 };
 
 const unsigned char kLoadingDynamicResolutionExpected[] = {0x89, 0x1D, 0xD8, 0xB3, 0x9F, 0x00};
 const unsigned char kLoadingDynamicResolutionReplacement[] = {0xE9, 0x63, 0x81, 0x12, 0x00, 0x90};
-const unsigned char kMouseCursorExpected[] = {0x05, 0xF0, 0x00, 0x00, 0x00};
-const unsigned char kMouseCursorReplacement[] = {0xE9, 0x49, 0xCF, 0x07, 0x00};
 const unsigned char kInitialClipCursorExpected[] = {0xC7, 0x45, 0xF8, 0x7F, 0x02, 0x00, 0x00};
 const unsigned char kInitialClipCursorReplacement[] = {0xE9, 0x3B, 0x25, 0x18, 0x00, 0x90, 0x90};
 const unsigned char kClipCursorExpected[] = {0xC7, 0x45, 0xF8, 0x7F, 0x02, 0x00, 0x00};
@@ -95,7 +94,7 @@ const Patch kNvgPatches[] = {
 
 const Patch kDynamicResolutionCodeCavePatch = {
     "Install dynamic resolution code cave",
-    "Writes resolution, mouse, and ClipCursor logic before redirecting fixed-resolution instructions.",
+    "Writes dynamic-resolution calculations before redirecting fixed-resolution instructions.",
     kDynamicResolutionCodeCave,
     {nullptr, sizeof(kDynamicResolutionCodeCaveBytes)},
     BYTE_SPAN(kDynamicResolutionCodeCaveBytes),
@@ -111,13 +110,22 @@ const Patch kDynamicResolutionCorePatch = {
     false,
 };
 
-const Patch kMouseCursorPatch = {
-    "Use dynamic resolution in SetCursorPosition",
-    "PollMouseInput(): ADD EAX,0xF0 -> JMP 005E48C0",
-    kPatchAddressPollMouseInputCursorPosition,
-    BYTE_SPAN(kMouseCursorExpected),
-    BYTE_SPAN(kMouseCursorReplacement),
-    false,
+const Patch kInitialClipCursorCodeCavePatch = {
+    "Install initial ClipCursor code cave",
+    "Writes dynamic ClipCursor bounds used by InitializeInGameSystems().",
+    kInitialClipCursorCodeCave,
+    {nullptr, sizeof(kInitialClipCursorCodeCaveBytes)},
+    BYTE_SPAN(kInitialClipCursorCodeCaveBytes),
+    true,
+};
+
+const Patch kClipCursorCodeCavePatch = {
+    "Install viewport ClipCursor code cave",
+    "Writes dynamic ClipCursor bounds used by ClipCursorToViewPort().",
+    kClipCursorCodeCave,
+    {nullptr, sizeof(kClipCursorCodeCaveBytes)},
+    BYTE_SPAN(kClipCursorCodeCaveBytes),
+    true,
 };
 
 const Patch kClipCursorPatches[] = {
@@ -242,7 +250,6 @@ PatchConfig LoadPatchConfig() {
     PatchConfig config = {};
     config.nvgResolution = BoolFromIni(iniPath, L"NVGResolution", config.nvgResolution);
     config.dynamicResolution = BoolFromIni(iniPath, L"DynamicResolution", config.dynamicResolution);
-    config.mouseCursorFix = BoolFromIni(iniPath, L"MouseCursorFix", config.mouseCursorFix);
     config.clipCursorFix = BoolFromIni(iniPath, L"ClipCursorFix", config.clipCursorFix);
     config.restoreCursorClip = RecoveryBoolFromIni(
         iniPath, L"RestoreCursorClip", config.restoreCursorClip);
@@ -291,24 +298,15 @@ void ApplyBhdPatches() {
         ApplyPatchGroup(kNvgPatches);
     }
 
-    const bool needsDynamicResolutionCodeCave =
-        config.dynamicResolution || config.mouseCursorFix || config.clipCursorFix;
-    if (!needsDynamicResolutionCodeCave) {
-        return;
-    }
-
-    if (!ApplyPatch(kDynamicResolutionCodeCavePatch)) {
-        return;
-    }
-
-    if (config.dynamicResolution || config.mouseCursorFix) {
-        ApplyPatch(kDynamicResolutionCorePatch);
-    }
-    if (config.mouseCursorFix) {
-        ApplyPatch(kMouseCursorPatch);
+    if (config.dynamicResolution) {
+        if (ApplyPatch(kDynamicResolutionCodeCavePatch)) {
+            ApplyPatch(kDynamicResolutionCorePatch);
+        }
     }
     if (config.clipCursorFix) {
-        ApplyPatchGroup(kClipCursorPatches);
+        if (ApplyPatch(kInitialClipCursorCodeCavePatch) && ApplyPatch(kClipCursorCodeCavePatch)) {
+            ApplyPatchGroup(kClipCursorPatches);
+        }
     }
 }
 
