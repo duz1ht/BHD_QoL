@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "raw_input.h"
+
 namespace {
 constexpr uintptr_t kImageBase = 0x400000;
 constexpr uintptr_t kPatchAddressMovEax = 0x52A934;
@@ -23,7 +25,9 @@ struct PatchConfig {
     bool nvgResolution = true;
     bool dynamicResolution = true;
     bool clipCursorFix = true;
+    bool rawMouseInput = false;
     bool logAppliedPatches = false;
+    bool logRawInput = false;
 };
 
 struct ByteSpan {
@@ -241,7 +245,9 @@ PatchConfig LoadPatchConfig() {
     config.nvgResolution = BoolFromIni(iniPath, L"NVGResolution", config.nvgResolution);
     config.dynamicResolution = BoolFromIni(iniPath, L"DynamicResolution", config.dynamicResolution);
     config.clipCursorFix = BoolFromIni(iniPath, L"ClipCursorFix", config.clipCursorFix);
+    config.rawMouseInput = BoolFromIni(iniPath, L"RawMouseInput", config.rawMouseInput);
     config.logAppliedPatches = DebugBoolFromIni(iniPath, L"LogAppliedPatches", config.logAppliedPatches);
+    config.logRawInput = DebugBoolFromIni(iniPath, L"LogRawInput", config.logRawInput);
     return config;
 }
 
@@ -267,6 +273,7 @@ void ApplyBhdPatches() {
             ApplyPatchGroup(kClipCursorPatches);
         }
     }
+    raw_input::Install({config.rawMouseInput, config.logRawInput});
 }
 
 HMODULE LoadRealDInput8() {
