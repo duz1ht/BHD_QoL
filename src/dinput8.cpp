@@ -4,7 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "cursor_clip_recovery.h"
+#include "logger.h"
+#include "dpi_awareness.h"
+#include "game_window.h"
+#include "raw_input.h"
 
 namespace {
 constexpr uintptr_t kImageBase = 0x400000;
@@ -12,24 +15,24 @@ constexpr uintptr_t kPatchAddressMovEax = 0x52A934;
 constexpr uintptr_t kPatchAddressWidthStore = 0x52A94C;
 constexpr uintptr_t kPatchAddressHeightStore = 0x52A956;
 constexpr uintptr_t kPatchAddressLoadingGameDynamicResolution = 0x4BC711;
-constexpr uintptr_t kPatchAddressPollMouseInputCursorPosition = 0x567972;
 constexpr uintptr_t kPatchAddressInitializeInGameSystemsClipCursor = 0x4623D2;
 constexpr uintptr_t kPatchAddressClipCursorToViewPort = 0x4628D3;
 constexpr uintptr_t kDynamicResolutionCodeCave = 0x5E4879;
+constexpr uintptr_t kInitialClipCursorCodeCave = 0x5E4912;
+constexpr uintptr_t kClipCursorCodeCave = 0x5E492B;
 
 HMODULE g_realDInput8 = nullptr;
-HANDLE g_recoveryStopEvent = nullptr;
-bool g_logAppliedPatches = false;
-
+volatile LONG g_initialized = 0;
 struct PatchConfig {
     bool nvgResolution = true;
     bool dynamicResolution = true;
-    bool mouseCursorFix = true;
     bool clipCursorFix = true;
+    bool rawMouseInput = true;
     bool restoreCursorClip = true;
-    bool waitForDisplayChange = true;
-    UINT restoreCursorClipDelayMs = 250;
-    bool logAppliedPatches = false;
+    bool dpiAware = true;
+    bool loggingEnabled = true;
+    unsigned long rawInputStatisticsIntervalMs = 5000;
+    bool invalidStatisticsInterval = false;
 };
 
 struct ByteSpan {
@@ -61,24 +64,23 @@ const unsigned char kDynamicResolutionCodeCaveBytes[] = {
     0x9F, 0x00, 0xD1, 0xFB, 0x89, 0x1D, 0x26, 0xC3, 0x60, 0x00, 0x8B, 0x1D,
     0xC0, 0x72, 0x9F, 0x00, 0xD1, 0xFB, 0xF7, 0xDB, 0x89, 0x1D, 0x2B, 0xC3,
     0x60, 0x00, 0x8B, 0x1D, 0xC4, 0x72, 0x9F, 0x00, 0xD1, 0xFB, 0xF7, 0xDB,
-    0x89, 0x1D, 0x30, 0xC3, 0x60, 0x00, 0xE9, 0x57, 0x7E, 0xED, 0xFF, 0x03,
-    0x05, 0x26, 0xC3, 0x60, 0x00, 0x50, 0x03, 0x0D, 0x22, 0xC3, 0x60, 0x00,
-    0x51, 0xFF, 0x15, 0xD8, 0x12, 0x61, 0x00, 0x8B, 0x15, 0xE0, 0x55, 0xF6,
-    0x00, 0x8B, 0x05, 0xE4, 0x55, 0xF6, 0x00, 0x03, 0x15, 0x2B, 0xC3, 0x60,
-    0x00, 0x03, 0x05, 0x30, 0xC3, 0x60, 0x00, 0x89, 0x15, 0xEC, 0x55, 0xF6,
-    0x00, 0xA3, 0xF0, 0x55, 0xF6, 0x00, 0x8B, 0x05, 0x22, 0xC3, 0x60, 0x00,
-    0xA3, 0xE0, 0x55, 0xF6, 0x00, 0x8B, 0x05, 0x26, 0xC3, 0x60, 0x00, 0xA3,
-    0xE4, 0x55, 0xF6, 0x00, 0xE9, 0xA8, 0x30, 0xF8, 0xFF, 0x8B, 0x05, 0xC0,
+    0x89, 0x1D, 0x30, 0xC3, 0x60, 0x00, 0xE9, 0x57, 0x7E, 0xED, 0xFF,
+};
+
+const unsigned char kInitialClipCursorCodeCaveBytes[] = {
+    0x8B, 0x05, 0xC0,
     0x72, 0x9F, 0x00, 0x48, 0x89, 0x45, 0xF8, 0x8B, 0x05, 0xC4, 0x72, 0x9F,
-    0x00, 0x48, 0x89, 0x45, 0xFC, 0xE9, 0xAC, 0xDA, 0xE7, 0xFF, 0x8B, 0x05,
-    0xC0, 0x72, 0x9F, 0x00, 0x48, 0x89, 0x45, 0xF8, 0x8B, 0x05, 0xC4, 0x72,
-    0x9F, 0x00, 0x48, 0x89, 0x45, 0xFC, 0xE9, 0x9D, 0xDF, 0xE7, 0xFF,
+    0x00, 0x48, 0x89, 0x45, 0xFC, 0xE9, 0xAC, 0xDA, 0xE7, 0xFF,
+};
+
+const unsigned char kClipCursorCodeCaveBytes[] = {
+    0x8B, 0x05, 0xC0, 0x72, 0x9F, 0x00, 0x48, 0x89, 0x45, 0xF8, 0x8B, 0x05,
+    0xC4, 0x72, 0x9F, 0x00, 0x48, 0x89, 0x45, 0xFC, 0xE9, 0x9D, 0xDF, 0xE7,
+    0xFF,
 };
 
 const unsigned char kLoadingDynamicResolutionExpected[] = {0x89, 0x1D, 0xD8, 0xB3, 0x9F, 0x00};
 const unsigned char kLoadingDynamicResolutionReplacement[] = {0xE9, 0x63, 0x81, 0x12, 0x00, 0x90};
-const unsigned char kMouseCursorExpected[] = {0x05, 0xF0, 0x00, 0x00, 0x00};
-const unsigned char kMouseCursorReplacement[] = {0xE9, 0x49, 0xCF, 0x07, 0x00};
 const unsigned char kInitialClipCursorExpected[] = {0xC7, 0x45, 0xF8, 0x7F, 0x02, 0x00, 0x00};
 const unsigned char kInitialClipCursorReplacement[] = {0xE9, 0x3B, 0x25, 0x18, 0x00, 0x90, 0x90};
 const unsigned char kClipCursorExpected[] = {0xC7, 0x45, 0xF8, 0x7F, 0x02, 0x00, 0x00};
@@ -95,7 +97,7 @@ const Patch kNvgPatches[] = {
 
 const Patch kDynamicResolutionCodeCavePatch = {
     "Install dynamic resolution code cave",
-    "Writes resolution, mouse, and ClipCursor logic before redirecting fixed-resolution instructions.",
+    "Writes dynamic-resolution calculations before redirecting fixed-resolution instructions.",
     kDynamicResolutionCodeCave,
     {nullptr, sizeof(kDynamicResolutionCodeCaveBytes)},
     BYTE_SPAN(kDynamicResolutionCodeCaveBytes),
@@ -111,13 +113,22 @@ const Patch kDynamicResolutionCorePatch = {
     false,
 };
 
-const Patch kMouseCursorPatch = {
-    "Use dynamic resolution in SetCursorPosition",
-    "PollMouseInput(): ADD EAX,0xF0 -> JMP 005E48C0",
-    kPatchAddressPollMouseInputCursorPosition,
-    BYTE_SPAN(kMouseCursorExpected),
-    BYTE_SPAN(kMouseCursorReplacement),
-    false,
+const Patch kInitialClipCursorCodeCavePatch = {
+    "Install initial ClipCursor code cave",
+    "Writes dynamic ClipCursor bounds used by InitializeInGameSystems().",
+    kInitialClipCursorCodeCave,
+    {nullptr, sizeof(kInitialClipCursorCodeCaveBytes)},
+    BYTE_SPAN(kInitialClipCursorCodeCaveBytes),
+    true,
+};
+
+const Patch kClipCursorCodeCavePatch = {
+    "Install viewport ClipCursor code cave",
+    "Writes dynamic ClipCursor bounds used by ClipCursorToViewPort().",
+    kClipCursorCodeCave,
+    {nullptr, sizeof(kClipCursorCodeCaveBytes)},
+    BYTE_SPAN(kClipCursorCodeCaveBytes),
+    true,
 };
 
 const Patch kClipCursorPatches[] = {
@@ -151,16 +162,6 @@ bool BytesAreZeroFilled(const unsigned char* current, size_t size) {
     return true;
 }
 
-void LogPatchMessage(const char* title, const char* status) {
-    if (!g_logAppliedPatches) {
-        return;
-    }
-
-    char message[512] = {};
-    wsprintfA(message, "BHD_QoL: %s: %s\n", status, title);
-    OutputDebugStringA(message);
-}
-
 bool WriteBytes(uintptr_t virtualAddress, ByteSpan replacement) {
     auto* address = reinterpret_cast<unsigned char*>(virtualAddress);
 
@@ -182,23 +183,27 @@ bool WriteBytes(uintptr_t virtualAddress, ByteSpan replacement) {
 bool ApplyPatch(const Patch& patch) {
     auto* address = reinterpret_cast<unsigned char*>(patch.virtualAddress);
     if (BytesEqual(address, patch.replacement)) {
-        LogPatchMessage(patch.title, "already applied");
+        logger::Log("INFO", "Patch", "address=0x%08lX status=already_applied title=%s",
+                    static_cast<unsigned long>(patch.virtualAddress), patch.title);
         return true;
     }
 
     const bool expectedMatches = BytesEqual(address, patch.expected);
     const bool zeroFilledMatches = patch.allowZeroFilledExpected && BytesAreZeroFilled(address, patch.expected.size);
     if (!expectedMatches && !zeroFilledMatches) {
-        LogPatchMessage(patch.title, "skipped unexpected bytes");
+        logger::Log("ERROR", "Patch", "address=0x%08lX status=unexpected_bytes title=%s",
+                    static_cast<unsigned long>(patch.virtualAddress), patch.title);
         return false;
     }
 
     if (!WriteBytes(patch.virtualAddress, patch.replacement)) {
-        LogPatchMessage(patch.title, "failed VirtualProtect/write");
+        logger::Log("ERROR", "Patch", "address=0x%08lX status=write_failed error=%lu title=%s",
+                    static_cast<unsigned long>(patch.virtualAddress), GetLastError(), patch.title);
         return false;
     }
 
-    LogPatchMessage(patch.title, "applied");
+    logger::Log("INFO", "Patch", "address=0x%08lX status=applied title=%s description=%s",
+                static_cast<unsigned long>(patch.virtualAddress), patch.title, patch.description);
     return true;
 }
 
@@ -213,14 +218,6 @@ bool ApplyPatchGroup(const Patch (&patches)[Count]) {
 
 bool BoolFromIni(const wchar_t* path, const wchar_t* key, bool defaultValue) {
     return GetPrivateProfileIntW(L"PatchGroups", key, defaultValue ? 1 : 0, path) != 0;
-}
-
-bool DebugBoolFromIni(const wchar_t* path, const wchar_t* key, bool defaultValue) {
-    return GetPrivateProfileIntW(L"Debug", key, defaultValue ? 1 : 0, path) != 0;
-}
-
-bool RecoveryBoolFromIni(const wchar_t* path, const wchar_t* key, bool defaultValue) {
-    return GetPrivateProfileIntW(L"Recovery", key, defaultValue ? 1 : 0, path) != 0;
 }
 
 void BuildIniPath(wchar_t* iniPath, DWORD size) {
@@ -242,74 +239,74 @@ PatchConfig LoadPatchConfig() {
     PatchConfig config = {};
     config.nvgResolution = BoolFromIni(iniPath, L"NVGResolution", config.nvgResolution);
     config.dynamicResolution = BoolFromIni(iniPath, L"DynamicResolution", config.dynamicResolution);
-    config.mouseCursorFix = BoolFromIni(iniPath, L"MouseCursorFix", config.mouseCursorFix);
     config.clipCursorFix = BoolFromIni(iniPath, L"ClipCursorFix", config.clipCursorFix);
-    config.restoreCursorClip = RecoveryBoolFromIni(
-        iniPath, L"RestoreCursorClip", config.restoreCursorClip);
-    config.waitForDisplayChange = RecoveryBoolFromIni(
-        iniPath, L"WaitForDisplayChange", config.waitForDisplayChange);
-    const UINT delay = GetPrivateProfileIntW(
-        L"Recovery", L"RestoreCursorClipDelayMs", config.restoreCursorClipDelayMs, iniPath);
-    config.restoreCursorClipDelayMs = delay < 1 ? 1 : (delay > 10000 ? 10000 : delay);
-    config.logAppliedPatches = DebugBoolFromIni(iniPath, L"LogAppliedPatches", config.logAppliedPatches);
+    config.rawMouseInput = BoolFromIni(iniPath, L"RawMouseInput", config.rawMouseInput);
+    config.restoreCursorClip =
+        BoolFromIni(iniPath, L"RestoreCursorClip", config.restoreCursorClip);
+    config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
+    config.loggingEnabled =
+        GetPrivateProfileIntW(L"Logging", L"Enabled", config.loggingEnabled ? 1 : 0, iniPath) != 0;
+    const int interval = GetPrivateProfileIntW(L"Logging", L"RawInputStatisticsIntervalMs",
+                                                config.rawInputStatisticsIntervalMs, iniPath);
+    config.invalidStatisticsInterval = interval < 1000 || interval > 60000;
+    config.rawInputStatisticsIntervalMs = config.invalidStatisticsInterval
+                                              ? 5000
+                                              : static_cast<unsigned long>(interval);
     return config;
 }
 
-DWORD WINAPI InstallCursorClipRecovery(void*) {
-    const PatchConfig config = LoadPatchConfig();
-    const cursor_clip_recovery::Settings settings{
-        config.restoreCursorClip,
-        config.waitForDisplayChange,
-        config.restoreCursorClipDelayMs,
-    };
-    cursor_clip_recovery::Install(settings, g_recoveryStopEvent);
-    return 0;
-}
-
-void StartCursorClipRecovery() {
-    g_recoveryStopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!g_recoveryStopEvent) return;
-
-    HANDLE thread = CreateThread(nullptr, 0, InstallCursorClipRecovery, nullptr, 0, nullptr);
-    if (!thread) {
-        CloseHandle(g_recoveryStopEvent);
-        g_recoveryStopEvent = nullptr;
-        return;
-    }
-    CloseHandle(thread);
-}
-
 void ApplyBhdPatches() {
-    if (reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)) != kImageBase) {
+    const PatchConfig config = LoadPatchConfig();
+    logger::Initialize(config.loggingEnabled);
+    logger::Log("INFO", "Config",
+                "NVGResolution=%d DynamicResolution=%d ClipCursorFix=%d RawMouseInput=%d "
+                "RestoreCursorClip=%d "
+                "DPIAware=%d "
+                "RawInputStatisticsIntervalMs=%lu",
+                config.nvgResolution, config.dynamicResolution, config.clipCursorFix,
+                config.rawMouseInput, config.restoreCursorClip, config.dpiAware,
+                config.rawInputStatisticsIntervalMs);
+    if (config.invalidStatisticsInterval) {
+        logger::Log("WARN", "Config",
+                    "invalid RawInputStatisticsIntervalMs; using default 5000");
+    }
+    const uintptr_t imageBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    if (imageBase != kImageBase) {
+        logger::Log("ERROR", "Executable", "unsupported image base: expected=0x%08lX actual=0x%08lX",
+                    static_cast<unsigned long>(kImageBase), static_cast<unsigned long>(imageBase));
         return;
     }
-
-    const PatchConfig config = LoadPatchConfig();
-    g_logAppliedPatches = config.logAppliedPatches;
+    logger::Log("INFO", "Executable", "image base validated: 0x%08lX",
+                static_cast<unsigned long>(imageBase));
+    dpi_awareness::Initialize(config.dpiAware);
 
     if (config.nvgResolution) {
+        logger::Log("INFO", "NVGResolution", "feature enabled");
         ApplyPatchGroup(kNvgPatches);
+    } else {
+        logger::Log("INFO", "NVGResolution", "feature disabled");
     }
 
-    const bool needsDynamicResolutionCodeCave =
-        config.dynamicResolution || config.mouseCursorFix || config.clipCursorFix;
-    if (!needsDynamicResolutionCodeCave) {
-        return;
-    }
-
-    if (!ApplyPatch(kDynamicResolutionCodeCavePatch)) {
-        return;
-    }
-
-    if (config.dynamicResolution || config.mouseCursorFix) {
-        ApplyPatch(kDynamicResolutionCorePatch);
-    }
-    if (config.mouseCursorFix) {
-        ApplyPatch(kMouseCursorPatch);
+    if (config.dynamicResolution) {
+        logger::Log("INFO", "DynamicResolution", "feature enabled");
+        if (ApplyPatch(kDynamicResolutionCodeCavePatch)) {
+            ApplyPatch(kDynamicResolutionCorePatch);
+        }
+    } else {
+        logger::Log("INFO", "DynamicResolution", "feature disabled");
     }
     if (config.clipCursorFix) {
-        ApplyPatchGroup(kClipCursorPatches);
+        logger::Log("INFO", "ClipCursorFix", "feature enabled");
+        if (ApplyPatch(kInitialClipCursorCodeCavePatch) && ApplyPatch(kClipCursorCodeCavePatch)) {
+            ApplyPatchGroup(kClipCursorPatches);
+        }
+    } else {
+        logger::Log("INFO", "ClipCursorFix", "feature disabled");
     }
+    const bool rawInstalled =
+        raw_input::Install({config.rawMouseInput, config.rawInputStatisticsIntervalMs});
+    game_window::Configure(
+        {config.rawMouseInput && rawInstalled, config.restoreCursorClip});
 }
 
 HMODULE LoadRealDInput8() {
@@ -328,7 +325,24 @@ HMODULE LoadRealDInput8() {
     }
 
     g_realDInput8 = LoadLibraryW(systemPath);
+    if (g_realDInput8 == nullptr) {
+        logger::Log("ERROR", "Proxy", "LoadLibraryW failed for system dinput8.dll: error=%lu",
+                    GetLastError());
+    } else {
+        logger::Log("INFO", "Proxy", "system dinput8.dll loaded at 0x%08lX",
+                    reinterpret_cast<unsigned long>(g_realDInput8));
+    }
     return g_realDInput8;
+}
+
+void EnsureInitialized() {
+    if (InterlockedCompareExchange(&g_initialized, 1, 0) == 0) {
+        ApplyBhdPatches();
+        LoadRealDInput8();
+        InterlockedExchange(&g_initialized, 2);
+        return;
+    }
+    while (InterlockedCompareExchange(&g_initialized, 2, 2) != 2) Sleep(0);
 }
 
 template <typename Function>
@@ -337,12 +351,17 @@ Function GetRealProc(const char* name) {
     if (realDll == nullptr) {
         return nullptr;
     }
-    return reinterpret_cast<Function>(GetProcAddress(realDll, name));
+    const auto function = reinterpret_cast<Function>(GetProcAddress(realDll, name));
+    if (function == nullptr) {
+        logger::Log("ERROR", "Proxy", "GetProcAddress(%s) failed: error=%lu", name, GetLastError());
+    }
+    return function;
 }
 }  // namespace
 
 extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE hinst, DWORD version, REFIID riidltf,
                                               LPVOID* out, LPUNKNOWN outer) {
+    EnsureInitialized();
     using DirectInput8CreateFn = HRESULT(WINAPI*)(HINSTANCE, DWORD, REFIID, LPVOID*, LPUNKNOWN);
     const auto real = GetRealProc<DirectInput8CreateFn>("DirectInput8Create");
     if (real == nullptr) {
@@ -352,24 +371,28 @@ extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE hinst, DWORD version, REF
 }
 
 extern "C" HRESULT WINAPI DllCanUnloadNow() {
+    EnsureInitialized();
     using Fn = HRESULT(WINAPI*)();
     const auto real = GetRealProc<Fn>("DllCanUnloadNow");
     return real != nullptr ? real() : S_FALSE;
 }
 
 extern "C" HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID* out) {
+    EnsureInitialized();
     using Fn = HRESULT(WINAPI*)(REFCLSID, REFIID, LPVOID*);
     const auto real = GetRealProc<Fn>("DllGetClassObject");
     return real != nullptr ? real(rclsid, riid, out) : E_FAIL;
 }
 
 extern "C" HRESULT WINAPI DllRegisterServer() {
+    EnsureInitialized();
     using Fn = HRESULT(WINAPI*)();
     const auto real = GetRealProc<Fn>("DllRegisterServer");
     return real != nullptr ? real() : E_FAIL;
 }
 
 extern "C" HRESULT WINAPI DllUnregisterServer() {
+    EnsureInitialized();
     using Fn = HRESULT(WINAPI*)();
     const auto real = GetRealProc<Fn>("DllUnregisterServer");
     return real != nullptr ? real() : E_FAIL;
@@ -378,13 +401,6 @@ extern "C" HRESULT WINAPI DllUnregisterServer() {
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(module);
-        ApplyBhdPatches();
-        LoadRealDInput8();
-        StartCursorClipRecovery();
-    } else if (reason == DLL_PROCESS_DETACH) {
-        // The proxy and its hooks live for the process lifetime. Do not wait for
-        // the installer or remove hooks while the Windows loader lock is held.
-        if (g_recoveryStopEvent) SetEvent(g_recoveryStopEvent);
     }
     return TRUE;
 }
