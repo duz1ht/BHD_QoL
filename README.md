@@ -47,6 +47,7 @@ Copy `dinput8.ini` next to `dfbhd.exe` and the compiled `dinput8.dll` to enable 
 
 ```ini
 [PatchGroups]
+DPIAware=1
 NVGResolution=1
 DynamicResolution=1
 ClipCursorFix=1
@@ -66,6 +67,14 @@ WndProc hooks. Either feature can be disabled without disabling the other. If th
 Input hook cannot validate the supported executable or complete registration, the DLL
 retains its legacy mouse path while cursor restoration can continue independently. If
 `dinput8.ini` is missing, the DLL uses the same defaults shown above.
+
+`DPIAware=1` requests System DPI awareness before the real DirectInput entry point
+is called and before the game creates its window. The DLL tries the modern context
+API first, then the Windows 8.1 process API, and finally the Vista-era API, resolving
+all functions dynamically for compatibility with older Windows versions. It does not
+replace an awareness mode that is already configured (including Per-Monitor awareness),
+and an unavailable API is non-fatal. An executable manifest remains preferable when
+the game executable can be modified.
 
 `Logging.Enabled=1` creates a new automatically named
 `BHD_QoL_<date>_<time>_<pid>.log` beside `dfbhd.exe` for every session. Every line

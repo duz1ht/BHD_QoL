@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "logger.h"
+#include "dpi_awareness.h"
 #include "game_window.h"
 #include "raw_input.h"
 
@@ -21,12 +22,14 @@ constexpr uintptr_t kInitialClipCursorCodeCave = 0x5E4912;
 constexpr uintptr_t kClipCursorCodeCave = 0x5E492B;
 
 HMODULE g_realDInput8 = nullptr;
+volatile LONG g_initialized = 0;
 struct PatchConfig {
     bool nvgResolution = true;
     bool dynamicResolution = true;
     bool clipCursorFix = true;
     bool rawMouseInput = true;
     bool restoreCursorClip = true;
+    bool dpiAware = true;
     bool loggingEnabled = true;
     unsigned long rawInputStatisticsIntervalMs = 5000;
     bool invalidStatisticsInterval = false;
@@ -240,6 +243,7 @@ PatchConfig LoadPatchConfig() {
     config.rawMouseInput = BoolFromIni(iniPath, L"RawMouseInput", config.rawMouseInput);
     config.restoreCursorClip =
         BoolFromIni(iniPath, L"RestoreCursorClip", config.restoreCursorClip);
+    config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
     config.loggingEnabled =
         GetPrivateProfileIntW(L"Logging", L"Enabled", config.loggingEnabled ? 1 : 0, iniPath) != 0;
     const int interval = GetPrivateProfileIntW(L"Logging", L"RawInputStatisticsIntervalMs",
@@ -257,15 +261,15 @@ void ApplyBhdPatches() {
     logger::Log("INFO", "Config",
                 "NVGResolution=%d DynamicResolution=%d ClipCursorFix=%d RawMouseInput=%d "
                 "RestoreCursorClip=%d "
+                "DPIAware=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.nvgResolution, config.dynamicResolution, config.clipCursorFix,
-                config.rawMouseInput, config.restoreCursorClip,
+                config.rawMouseInput, config.restoreCursorClip, config.dpiAware,
                 config.rawInputStatisticsIntervalMs);
     if (config.invalidStatisticsInterval) {
         logger::Log("WARN", "Config",
                     "invalid RawInputStatisticsIntervalMs; using default 5000");
     }
-
     const uintptr_t imageBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     if (imageBase != kImageBase) {
         logger::Log("ERROR", "Executable", "unsupported image base: expected=0x%08lX actual=0x%08lX",
@@ -274,6 +278,7 @@ void ApplyBhdPatches() {
     }
     logger::Log("INFO", "Executable", "image base validated: 0x%08lX",
                 static_cast<unsigned long>(imageBase));
+    dpi_awareness::Initialize(config.dpiAware);
 
     if (config.nvgResolution) {
         logger::Log("INFO", "NVGResolution", "feature enabled");
@@ -330,6 +335,16 @@ HMODULE LoadRealDInput8() {
     return g_realDInput8;
 }
 
+void EnsureInitialized() {
+    if (InterlockedCompareExchange(&g_initialized, 1, 0) == 0) {
+        ApplyBhdPatches();
+        LoadRealDInput8();
+        InterlockedExchange(&g_initialized, 2);
+        return;
+    }
+    while (InterlockedCompareExchange(&g_initialized, 2, 2) != 2) Sleep(0);
+}
+
 template <typename Function>
 Function GetRealProc(const char* name) {
     HMODULE realDll = LoadRealDInput8();
@@ -346,6 +361,7 @@ Function GetRealProc(const char* name) {
 
 extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE hinst, DWORD version, REFIID riidltf,
                                               LPVOID* out, LPUNKNOWN outer) {
+    EnsureInitialized();
     using DirectInput8CreateFn = HRESULT(WINAPI*)(HINSTANCE, DWORD, REFIID, LPVOID*, LPUNKNOWN);
     const auto real = GetRealProc<DirectInput8CreateFn>("DirectInput8Create");
     if (real == nullptr) {
@@ -355,24 +371,28 @@ extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE hinst, DWORD version, REF
 }
 
 extern "C" HRESULT WINAPI DllCanUnloadNow() {
+    EnsureInitialized();
     using Fn = HRESULT(WINAPI*)();
     const auto real = GetRealProc<Fn>("DllCanUnloadNow");
     return real != nullptr ? real() : S_FALSE;
 }
 
 extern "C" HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID* out) {
+    EnsureInitialized();
     using Fn = HRESULT(WINAPI*)(REFCLSID, REFIID, LPVOID*);
     const auto real = GetRealProc<Fn>("DllGetClassObject");
     return real != nullptr ? real(rclsid, riid, out) : E_FAIL;
 }
 
 extern "C" HRESULT WINAPI DllRegisterServer() {
+    EnsureInitialized();
     using Fn = HRESULT(WINAPI*)();
     const auto real = GetRealProc<Fn>("DllRegisterServer");
     return real != nullptr ? real() : E_FAIL;
 }
 
 extern "C" HRESULT WINAPI DllUnregisterServer() {
+    EnsureInitialized();
     using Fn = HRESULT(WINAPI*)();
     const auto real = GetRealProc<Fn>("DllUnregisterServer");
     return real != nullptr ? real() : E_FAIL;
@@ -381,8 +401,6 @@ extern "C" HRESULT WINAPI DllUnregisterServer() {
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(module);
-        ApplyBhdPatches();
-        LoadRealDInput8();
     }
     return TRUE;
 }
