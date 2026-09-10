@@ -24,7 +24,7 @@ struct PatchConfig {
     bool nvgResolution = true;
     bool dynamicResolution = true;
     bool clipCursorFix = true;
-    bool rawMouseInput = false;
+    bool rawMouseInput = true;
     bool loggingEnabled = true;
     unsigned long rawInputStatisticsIntervalMs = 5000;
     bool invalidStatisticsInterval = false;

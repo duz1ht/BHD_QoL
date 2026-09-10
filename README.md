@@ -49,14 +49,14 @@ Copy `dinput8.ini` next to `dfbhd.exe` and the compiled `dinput8.dll` to enable 
 NVGResolution=1
 DynamicResolution=1
 ClipCursorFix=1
-RawMouseInput=0
+RawMouseInput=1
 
 [Logging]
 Enabled=1
 RawInputStatisticsIntervalMs=5000
 ```
 
-Set a patch group to `1` to enable it or `0` to disable it. Raw Input remains off by default so unsupported executable builds retain the original input path. If `dinput8.ini` is missing, the DLL uses the same defaults shown above.
+Set a patch group to `1` to enable it or `0` to disable it. Raw Input is enabled by default; set `RawMouseInput=0` to restore the original mouse path. If the Raw Input hook cannot validate the supported executable or complete registration, the DLL retains its legacy fallback. If `dinput8.ini` is missing, the DLL uses the same defaults shown above.
 
 `Logging.Enabled=1` creates a new automatically named
 `BHD_QoL_<date>_<time>_<pid>.log` beside `dfbhd.exe` for every session. Every line
