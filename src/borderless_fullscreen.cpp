@@ -1,4 +1,4 @@
-#include "fullscreen_borderless.h"
+#include "borderless_fullscreen.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -6,7 +6,7 @@
 
 #include "logger.h"
 
-namespace fullscreen_borderless {
+namespace borderless_fullscreen {
 namespace {
 constexpr uintptr_t kVidWindowed = 0x00A341C8;
 constexpr uintptr_t kCommandLineWindowed = 0x0095D47C;
@@ -37,7 +37,7 @@ bool WriteGameValue(uintptr_t address, LONG value, const char* name) {
     void* destination = reinterpret_cast<void*>(address);
     DWORD oldProtection = 0;
     if (!VirtualProtect(destination, sizeof(value), PAGE_READWRITE, &oldProtection)) {
-        logger::Log("ERROR", "FullscreenBorderless",
+        logger::Log("ERROR", "BorderlessFullscreen",
                     "could not write %s: VirtualProtect error=%lu", name, GetLastError());
         return false;
     }
@@ -45,7 +45,7 @@ bool WriteGameValue(uintptr_t address, LONG value, const char* name) {
     DWORD ignored = 0;
     const BOOL restored = VirtualProtect(destination, sizeof(value), oldProtection, &ignored);
     if (!restored) {
-        logger::Log("ERROR", "FullscreenBorderless",
+        logger::Log("ERROR", "BorderlessFullscreen",
                     "could not restore protection for %s: error=%lu", name, GetLastError());
     }
     return restored != FALSE;
@@ -67,7 +67,7 @@ bool WriteCode(uintptr_t address, const void* bytes, size_t size) {
     void* destination = reinterpret_cast<void*>(address);
     DWORD oldProtection = 0;
     if (!VirtualProtect(destination, size, PAGE_EXECUTE_READWRITE, &oldProtection)) {
-        logger::Log("ERROR", "FullscreenBorderless",
+        logger::Log("ERROR", "BorderlessFullscreen",
                     "could not make resolution patch writable: error=%lu", GetLastError());
         return false;
     }
@@ -75,7 +75,7 @@ bool WriteCode(uintptr_t address, const void* bytes, size_t size) {
     FlushInstructionCache(GetCurrentProcess(), destination, size);
     DWORD ignored = 0;
     if (!VirtualProtect(destination, size, oldProtection, &ignored)) {
-        logger::Log("WARN", "FullscreenBorderless",
+        logger::Log("WARN", "BorderlessFullscreen",
                     "resolution patch applied but protection restore failed: error=%lu",
                     GetLastError());
     }
@@ -187,7 +187,7 @@ void LogActiveState(HWND window, const char* trigger) {
     const LONG active = styleOk && outerOk && clientOk && windowedOk && resolutionOk;
     if (active == g_lastActive) return;
     g_lastActive = active;
-    logger::Log(active ? "INFO" : "WARN", "FullscreenBorderless",
+    logger::Log(active ? "INFO" : "WARN", "BorderlessFullscreen",
                 "trigger=%s active=%ld style_ok=%d window_rect_ok=%d client_rect_ok=%d "
                 "windowed_ok=%d resolution_ok=%d monitor=%ldx%ld",
                 trigger, active, styleOk, outerOk, clientOk, windowedOk, resolutionOk,
@@ -209,17 +209,17 @@ bool WindowMatches(HWND window, LONG_PTR style, LONG_PTR exStyle) {
 bool Initialize(bool enabled) {
     g_enabled = enabled;
     if (!enabled) {
-        logger::Log("INFO", "FullscreenBorderless", "feature disabled");
+        logger::Log("INFO", "BorderlessFullscreen", "feature disabled");
         return true;
     }
     if (!ValidateExecutable()) {
-        logger::Log("ERROR", "FullscreenBorderless",
+        logger::Log("ERROR", "BorderlessFullscreen",
                     "supported executable signatures did not match; feature disabled");
         g_enabled = false;
         return false;
     }
     if (!GetPrimaryMonitorRect(&g_monitorRect)) {
-        logger::Log("ERROR", "FullscreenBorderless",
+        logger::Log("ERROR", "BorderlessFullscreen",
                     "primary monitor bounds unavailable: error=%lu", GetLastError());
         g_enabled = false;
         return false;
@@ -228,12 +228,12 @@ bool Initialize(bool enabled) {
     const LONG height = g_monitorRect.bottom - g_monitorRect.top;
     const bool configured = ConfigureGame(width, height) && InstallResolutionOverride();
     if (!configured) {
-        logger::Log("ERROR", "FullscreenBorderless",
+        logger::Log("ERROR", "BorderlessFullscreen",
                     "windowed state or resolution override installation failed");
         g_enabled = false;
         return false;
     }
-    logger::Log("INFO", "FullscreenBorderless",
+    logger::Log("INFO", "BorderlessFullscreen",
                 "feature enabled monitor=(%ld,%ld)-(%ld,%ld) resolution=%ldx%ld",
                 g_monitorRect.left, g_monitorRect.top, g_monitorRect.right,
                 g_monitorRect.bottom, width, height);
@@ -248,7 +248,7 @@ bool Apply(HWND window, const char* trigger) {
     RECT monitorRect = {};
     if (!GetWindowMonitorRect(window, &monitorRect)) {
         InterlockedExchange(&g_applying, 0);
-        logger::Log("ERROR", "FullscreenBorderless",
+        logger::Log("ERROR", "BorderlessFullscreen",
                     "trigger=%s monitor bounds unavailable: error=%lu", trigger, GetLastError());
         return false;
     }
@@ -300,7 +300,7 @@ bool Apply(HWND window, const char* trigger) {
     const DWORD positionError = positioned ? ERROR_SUCCESS : GetLastError();
     InterlockedExchange(&g_applying, 0);
 
-    logger::Log(positioned ? "INFO" : "ERROR", "FullscreenBorderless",
+    logger::Log(positioned ? "INFO" : "ERROR", "BorderlessFullscreen",
                 "trigger=%s style=0x%08lX ex_style=0x%08lX rect=(%ld,%ld)-(%ld,%ld) result=%d error=%lu",
                 trigger, static_cast<unsigned long>(style), static_cast<unsigned long>(exStyle),
                 g_monitorRect.left, g_monitorRect.top, g_monitorRect.right,
@@ -309,4 +309,4 @@ bool Apply(HWND window, const char* trigger) {
     return positioned != FALSE;
 }
 
-}  // namespace fullscreen_borderless
+}  // namespace borderless_fullscreen

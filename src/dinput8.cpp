@@ -6,7 +6,7 @@
 
 #include "logger.h"
 #include "dpi_awareness.h"
-#include "fullscreen_borderless.h"
+#include "borderless_fullscreen.h"
 #include "game_window.h"
 #include "raw_input.h"
 
@@ -31,7 +31,7 @@ struct PatchConfig {
     bool rawMouseInput = true;
     bool restoreCursorClip = true;
     bool dpiAware = true;
-    bool fullscreenBorderless = false;
+    bool borderlessFullscreen = false;
     bool loggingEnabled = false;
     unsigned long rawInputStatisticsIntervalMs = 5000;
     bool invalidStatisticsInterval = false;
@@ -246,8 +246,8 @@ PatchConfig LoadPatchConfig() {
     config.restoreCursorClip =
         BoolFromIni(iniPath, L"RestoreCursorClip", config.restoreCursorClip);
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
-    config.fullscreenBorderless =
-        BoolFromIni(iniPath, L"FullscreenBorderless", config.fullscreenBorderless);
+    config.borderlessFullscreen =
+        BoolFromIni(iniPath, L"BorderlessFullscreen", config.borderlessFullscreen);
     config.loggingEnabled =
         GetPrivateProfileIntW(L"Logging", L"Enabled", config.loggingEnabled ? 1 : 0, iniPath) != 0;
     const int interval = GetPrivateProfileIntW(L"Logging", L"RawInputStatisticsIntervalMs",
@@ -265,11 +265,11 @@ void ApplyBhdPatches() {
     logger::Log("INFO", "Config",
                 "NVGResolution=%d DynamicResolution=%d ClipCursorFix=%d RawMouseInput=%d "
                 "RestoreCursorClip=%d "
-                "DPIAware=%d FullscreenBorderless=%d "
+                "DPIAware=%d BorderlessFullscreen=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.nvgResolution, config.dynamicResolution, config.clipCursorFix,
                 config.rawMouseInput, config.restoreCursorClip, config.dpiAware,
-                config.fullscreenBorderless,
+                config.borderlessFullscreen,
                 config.rawInputStatisticsIntervalMs);
     if (config.invalidStatisticsInterval) {
         logger::Log("WARN", "Config",
@@ -284,12 +284,12 @@ void ApplyBhdPatches() {
     logger::Log("INFO", "Executable", "image base validated: 0x%08lX",
                 static_cast<unsigned long>(imageBase));
     dpi_awareness::Initialize(config.dpiAware);
-    if (config.fullscreenBorderless && !config.dpiAware) {
-        logger::Log("WARN", "FullscreenBorderless",
+    if (config.borderlessFullscreen && !config.dpiAware) {
+        logger::Log("WARN", "BorderlessFullscreen",
                     "DPIAware=0 may virtualize monitor coordinates and dimensions");
     }
     const bool borderlessInitialized =
-        fullscreen_borderless::Initialize(config.fullscreenBorderless);
+        borderless_fullscreen::Initialize(config.borderlessFullscreen);
 
     if (config.nvgResolution) {
         logger::Log("INFO", "NVGResolution", "feature enabled");
@@ -318,7 +318,7 @@ void ApplyBhdPatches() {
         raw_input::Install({config.rawMouseInput, config.rawInputStatisticsIntervalMs});
     game_window::Configure(
         {config.rawMouseInput && rawInstalled, config.restoreCursorClip,
-         config.fullscreenBorderless && borderlessInitialized});
+         config.borderlessFullscreen && borderlessInitialized});
 }
 
 HMODULE LoadRealDInput8() {

@@ -54,7 +54,7 @@ Copy `dinput8.ini` next to `dfbhd.exe` and the compiled `dinput8.dll` to enable 
 ```ini
 [PatchGroups]
 DPIAware=1
-FullscreenBorderless=0
+BorderlessFullscreen=0
 NVGResolution=1
 DynamicResolution=1
 ClipCursorFix=1
@@ -83,13 +83,13 @@ replace an awareness mode that is already configured (including Per-Monitor awar
 and an unavailable API is non-fatal. An executable manifest remains preferable when
 the game executable can be modified.
 
-`FullscreenBorderless=1` forces the game's D3D8 windowed path and internal resolution
+`BorderlessFullscreen=1` forces the game's D3D8 windowed path and internal resolution
 to the dimensions of the monitor nearest its initial window, then removes the caption,
 border, and resize frame and covers the monitor's complete rectangle (not its work
 area). It is disabled by default. Keep `DPIAware=1` enabled so Windows does not
 virtualize monitor coordinates.
 
-When logging is enabled, `FullscreenBorderless active=1` confirms that the popup style,
+When logging is enabled, `BorderlessFullscreen active=1` confirms that the popup style,
 window and client rectangles, windowed-render state, and internal resolution all match
 the selected monitor. The feature patches the supported executable's resolution setup
 before device creation; an executable signature mismatch disables only this feature.
