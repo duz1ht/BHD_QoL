@@ -4,9 +4,9 @@
 
 namespace borderless_fullscreen {
 
-// Selects the primary monitor and forces the game's windowed render path and
-// internal resolution before the game creates its Direct3D device.
-bool Initialize(bool enabled);
+// Selects the primary monitor and forces the game's windowed render path. The
+// internal resolution is changed to the monitor size only when requested.
+bool Initialize(bool enabled, bool forceDesktopResolution);
 
 // Applies (or re-applies) the borderless frame and full-monitor geometry.
 bool Apply(HWND window, const char* trigger);

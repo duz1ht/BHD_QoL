@@ -25,6 +25,7 @@ const unsigned char kExpectedWindowedRenderRead[] = {0x8B, 0x1D, 0x7C, 0xD4, 0x9
 const unsigned char kExpectedResolutionOverride[] = {0xA1, 0x80, 0xD4, 0x95, 0x00};
 
 bool g_enabled = false;
+bool g_forceDesktopResolution = false;
 volatile LONG g_applying = 0;
 volatile LONG g_monitorWidth = 0;
 volatile LONG g_monitorHeight = 0;
@@ -32,6 +33,10 @@ RECT g_monitorRect = {};
 HMONITOR g_monitor = nullptr;
 void* g_resolutionCodeCave = nullptr;
 LONG g_lastActive = -1;
+LONG g_lastRenderWidth = -1;
+LONG g_lastRenderHeight = -1;
+LONG g_lastOutputWidth = -1;
+LONG g_lastOutputHeight = -1;
 
 bool WriteGameValue(uintptr_t address, LONG value, const char* name) {
     void* destination = reinterpret_cast<void*>(address);
@@ -51,16 +56,19 @@ bool WriteGameValue(uintptr_t address, LONG value, const char* name) {
     return restored != FALSE;
 }
 
-bool ValidateExecutable() {
-    return std::memcmp(reinterpret_cast<const void*>(kWindowedReference),
-                       kExpectedWindowedReference, sizeof(kExpectedWindowedReference)) == 0 &&
-           std::memcmp(reinterpret_cast<const void*>(kWindowedArgumentHandler),
-                       kExpectedWindowedArgumentHandler,
-                       sizeof(kExpectedWindowedArgumentHandler)) == 0 &&
-           std::memcmp(reinterpret_cast<const void*>(kWindowedRenderRead),
-                       kExpectedWindowedRenderRead, sizeof(kExpectedWindowedRenderRead)) == 0 &&
-           std::memcmp(reinterpret_cast<const void*>(kResolutionOverride),
-                       kExpectedResolutionOverride, sizeof(kExpectedResolutionOverride)) == 0;
+bool ValidateExecutable(bool validateResolutionOverride) {
+    const bool windowedValid =
+        std::memcmp(reinterpret_cast<const void*>(kWindowedReference),
+                    kExpectedWindowedReference, sizeof(kExpectedWindowedReference)) == 0 &&
+        std::memcmp(reinterpret_cast<const void*>(kWindowedArgumentHandler),
+                    kExpectedWindowedArgumentHandler,
+                    sizeof(kExpectedWindowedArgumentHandler)) == 0 &&
+        std::memcmp(reinterpret_cast<const void*>(kWindowedRenderRead),
+                    kExpectedWindowedRenderRead, sizeof(kExpectedWindowedRenderRead)) == 0;
+    return windowedValid &&
+           (!validateResolutionOverride ||
+            std::memcmp(reinterpret_cast<const void*>(kResolutionOverride),
+                        kExpectedResolutionOverride, sizeof(kExpectedResolutionOverride)) == 0);
 }
 
 bool WriteCode(uintptr_t address, const void* bytes, size_t size) {
@@ -149,14 +157,15 @@ bool GetWindowMonitorRect(HWND window, RECT* result) {
     return !IsRectEmpty(result);
 }
 
-bool ConfigureGame(LONG width, LONG height) {
-    InterlockedExchange(&g_monitorWidth, width);
-    InterlockedExchange(&g_monitorHeight, height);
-    return WriteGameValue(kVidWindowed, 1, "VID_Windowed") &&
-           WriteGameValue(kCommandLineWindowed, 1, "command-line windowed state") &&
-           WriteGameValue(kWindowedAuxiliary, 1, "windowed auxiliary state") &&
-           WriteGameValue(kScreenWidth, width, "screen width") &&
-           WriteGameValue(kScreenHeight, height, "screen height");
+bool ConfigureGame() {
+    const bool windowedConfigured = WriteGameValue(kVidWindowed, 1, "VID_Windowed") &&
+                                    WriteGameValue(kCommandLineWindowed, 1,
+                                                   "command-line windowed state") &&
+                                    WriteGameValue(kWindowedAuxiliary, 1,
+                                                   "windowed auxiliary state");
+    if (!windowedConfigured || !g_forceDesktopResolution) return windowedConfigured;
+    return WriteGameValue(kScreenWidth, g_monitorWidth, "screen width") &&
+           WriteGameValue(kScreenHeight, g_monitorHeight, "screen height");
 }
 
 void LogActiveState(HWND window, const char* trigger) {
@@ -182,16 +191,29 @@ void LogActiveState(HWND window, const char* trigger) {
     const bool clientOk = clientScreenValid && EqualRect(&clientScreen, &g_monitorRect);
     const bool windowedOk = *reinterpret_cast<volatile LONG*>(kCommandLineWindowed) == 1 &&
                             *reinterpret_cast<volatile LONG*>(kWindowedAuxiliary) == 1;
-    const bool resolutionOk = *reinterpret_cast<volatile LONG*>(kScreenWidth) == g_monitorWidth &&
-                              *reinterpret_cast<volatile LONG*>(kScreenHeight) == g_monitorHeight;
+    const LONG renderWidth = *reinterpret_cast<volatile LONG*>(kScreenWidth);
+    const LONG renderHeight = *reinterpret_cast<volatile LONG*>(kScreenHeight);
+    const LONG outputWidth = g_monitorRect.right - g_monitorRect.left;
+    const LONG outputHeight = g_monitorRect.bottom - g_monitorRect.top;
+    const bool resolutionOk = !g_forceDesktopResolution ||
+                              (renderWidth == outputWidth && renderHeight == outputHeight);
+    const bool scaled = renderWidth != outputWidth || renderHeight != outputHeight;
     const LONG active = styleOk && outerOk && clientOk && windowedOk && resolutionOk;
-    if (active == g_lastActive) return;
+    if (active == g_lastActive && renderWidth == g_lastRenderWidth &&
+        renderHeight == g_lastRenderHeight && outputWidth == g_lastOutputWidth &&
+        outputHeight == g_lastOutputHeight) return;
     g_lastActive = active;
+    g_lastRenderWidth = renderWidth;
+    g_lastRenderHeight = renderHeight;
+    g_lastOutputWidth = outputWidth;
+    g_lastOutputHeight = outputHeight;
     logger::Log(active ? "INFO" : "WARN", "BorderlessFullscreen",
                 "trigger=%s active=%ld style_ok=%d window_rect_ok=%d client_rect_ok=%d "
-                "windowed_ok=%d resolution_ok=%d monitor=%ldx%ld",
+                "windowed_ok=%d resolution_ok=%d force_desktop_resolution=%d "
+                "render_resolution=%ldx%ld output_size=%ldx%ld scaled=%d",
                 trigger, active, styleOk, outerOk, clientOk, windowedOk, resolutionOk,
-                g_monitorWidth, g_monitorHeight);
+                g_forceDesktopResolution, renderWidth, renderHeight, outputWidth, outputHeight,
+                scaled);
 }
 
 bool WindowMatches(HWND window, LONG_PTR style, LONG_PTR exStyle) {
@@ -206,13 +228,14 @@ bool WindowMatches(HWND window, LONG_PTR style, LONG_PTR exStyle) {
 }
 }  // namespace
 
-bool Initialize(bool enabled) {
+bool Initialize(bool enabled, bool forceDesktopResolution) {
     g_enabled = enabled;
+    g_forceDesktopResolution = enabled && forceDesktopResolution;
     if (!enabled) {
         logger::Log("INFO", "BorderlessFullscreen", "feature disabled");
         return true;
     }
-    if (!ValidateExecutable()) {
+    if (!ValidateExecutable(g_forceDesktopResolution)) {
         logger::Log("ERROR", "BorderlessFullscreen",
                     "supported executable signatures did not match; feature disabled");
         g_enabled = false;
@@ -226,15 +249,20 @@ bool Initialize(bool enabled) {
     }
     const LONG width = g_monitorRect.right - g_monitorRect.left;
     const LONG height = g_monitorRect.bottom - g_monitorRect.top;
-    const bool configured = ConfigureGame(width, height) && InstallResolutionOverride();
+    InterlockedExchange(&g_monitorWidth, width);
+    InterlockedExchange(&g_monitorHeight, height);
+    const bool configured = ConfigureGame() &&
+                            (!g_forceDesktopResolution || InstallResolutionOverride());
     if (!configured) {
         logger::Log("ERROR", "BorderlessFullscreen",
-                    "windowed state or resolution override installation failed");
+                    "windowed state or requested resolution override installation failed");
         g_enabled = false;
         return false;
     }
     logger::Log("INFO", "BorderlessFullscreen",
-                "feature enabled monitor=(%ld,%ld)-(%ld,%ld) resolution=%ldx%ld",
+                "feature enabled force_desktop_resolution=%d "
+                "monitor=(%ld,%ld)-(%ld,%ld) output_size=%ldx%ld",
+                g_forceDesktopResolution,
                 g_monitorRect.left, g_monitorRect.top, g_monitorRect.right,
                 g_monitorRect.bottom, width, height);
     return true;
@@ -255,7 +283,9 @@ bool Apply(HWND window, const char* trigger) {
     g_monitorRect = monitorRect;
     const LONG monitorWidth = monitorRect.right - monitorRect.left;
     const LONG monitorHeight = monitorRect.bottom - monitorRect.top;
-    const bool configured = ConfigureGame(monitorWidth, monitorHeight);
+    InterlockedExchange(&g_monitorWidth, monitorWidth);
+    InterlockedExchange(&g_monitorHeight, monitorHeight);
+    const bool configured = ConfigureGame();
     if (!configured) {
         InterlockedExchange(&g_applying, 0);
         return false;

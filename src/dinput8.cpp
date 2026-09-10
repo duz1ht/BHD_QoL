@@ -32,6 +32,7 @@ struct PatchConfig {
     bool restoreCursorClip = true;
     bool dpiAware = true;
     bool borderlessFullscreen = false;
+    bool forceDesktopResolution = false;
     bool loggingEnabled = false;
     unsigned long rawInputStatisticsIntervalMs = 5000;
     bool invalidStatisticsInterval = false;
@@ -248,6 +249,8 @@ PatchConfig LoadPatchConfig() {
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
     config.borderlessFullscreen =
         BoolFromIni(iniPath, L"BorderlessFullscreen", config.borderlessFullscreen);
+    config.forceDesktopResolution =
+        BoolFromIni(iniPath, L"ForceDesktopResolution", config.forceDesktopResolution);
     config.loggingEnabled =
         GetPrivateProfileIntW(L"Logging", L"Enabled", config.loggingEnabled ? 1 : 0, iniPath) != 0;
     const int interval = GetPrivateProfileIntW(L"Logging", L"RawInputStatisticsIntervalMs",
@@ -265,11 +268,11 @@ void ApplyBhdPatches() {
     logger::Log("INFO", "Config",
                 "NVGResolution=%d DynamicResolution=%d ClipCursorFix=%d RawMouseInput=%d "
                 "RestoreCursorClip=%d "
-                "DPIAware=%d BorderlessFullscreen=%d "
+                "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.nvgResolution, config.dynamicResolution, config.clipCursorFix,
                 config.rawMouseInput, config.restoreCursorClip, config.dpiAware,
-                config.borderlessFullscreen,
+                config.borderlessFullscreen, config.forceDesktopResolution,
                 config.rawInputStatisticsIntervalMs);
     if (config.invalidStatisticsInterval) {
         logger::Log("WARN", "Config",
@@ -289,7 +292,8 @@ void ApplyBhdPatches() {
                     "DPIAware=0 may virtualize monitor coordinates and dimensions");
     }
     const bool borderlessInitialized =
-        borderless_fullscreen::Initialize(config.borderlessFullscreen);
+        borderless_fullscreen::Initialize(config.borderlessFullscreen,
+                                          config.forceDesktopResolution);
 
     if (config.nvgResolution) {
         logger::Log("INFO", "NVGResolution", "feature enabled");
