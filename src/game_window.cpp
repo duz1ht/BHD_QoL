@@ -6,6 +6,7 @@
 #include "borderless_fullscreen.h"
 #include "logger.h"
 #include "raw_input.h"
+#include "scope_scale_fix.h"
 
 namespace game_window {
 namespace {
@@ -32,6 +33,7 @@ void ResumeRawInputIfReady(const char* trigger) {
 }
 
 void HandleFocusLost() {
+    scope_scale_fix::Reset();
     if (g_settings.rawMouseInput) raw_input::HandleFocusLost();
     cursor_clip::HandleFocusLost();
 }
@@ -127,9 +129,12 @@ DWORD WINAPI WindowDiscoveryThread(void*) {
 void Configure(const Settings& settings) {
     g_settings = settings;
     logger::Log("INFO", "GameWindow",
-                "configured RawMouseInput=%d RestoreCursorClip=%d BorderlessFullscreen=%d",
-                settings.rawMouseInput, settings.restoreCursorClip, settings.borderlessFullscreen);
-    if ((!settings.rawMouseInput && settings.restoreCursorClip) || settings.borderlessFullscreen) {
+                "configured RawMouseInput=%d RestoreCursorClip=%d BorderlessFullscreen=%d "
+                "FixScopeScale=%d",
+                settings.rawMouseInput, settings.restoreCursorClip, settings.borderlessFullscreen,
+                settings.fixScopeScale);
+    if ((!settings.rawMouseInput && (settings.restoreCursorClip || settings.fixScopeScale)) ||
+        settings.borderlessFullscreen) {
         HANDLE thread = CreateThread(nullptr, 0, WindowDiscoveryThread, nullptr, 0, nullptr);
         if (thread != nullptr) CloseHandle(thread);
         else logger::Log("ERROR", "GameWindow", "window discovery thread failed: error=%lu",
