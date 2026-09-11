@@ -80,12 +80,12 @@ Input hook cannot validate the supported executable or complete registration, th
 retains its legacy mouse path while cursor restoration can continue independently. If
 `dinput8.ini` is missing, the DLL uses the same defaults shown above.
 
-`OvalSpinMap=1` replaces the Spin Map's rectangular four-vertex draw with a
-32-segment oval triangle fan and draws a red diagnostic outline around it. Its
-bounds still come from the game's
-`HUDSPINMAPX1/X2/Y1/Y2` placement, and the original texture coordinates are
-interpolated across the fan so the existing map rotation is retained. At the default
-value of `0`, the original draw call is left untouched.
+`OvalSpinMap=1` intercepts the Spin Map's existing indexed 32-segment radial
+submission, keeps its submitted center and horizontal radius, and derives the vertical
+radius from the current `HUDSPINMAPX1/X2/Y1/Y2` rectangle. It also draws a red
+diagnostic outline around that same geometry. The rectangular Direct3D viewport is
+left unchanged, as are the game's texture, orientation, and HUD placement logic. At
+the default value of `0`, the original indexed draw call is left untouched.
 
 The shared window hook also verifies the real foreground process independently of
 Alt+Tab messages. When the Start menu or another application takes foreground, it
