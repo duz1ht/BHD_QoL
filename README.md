@@ -61,6 +61,7 @@ DynamicResolution=1
 ClipCursorFix=1
 RawMouseInput=1
 RestoreCursorClip=1
+MouseScalingFix=1
 
 [Logging]
 Enabled=0
@@ -75,6 +76,13 @@ WndProc hooks. Either feature can be disabled without disabling the other. If th
 Input hook cannot validate the supported executable or complete registration, the DLL
 retains its legacy mouse path while cursor restoration can continue independently. If
 `dinput8.ini` is missing, the DLL uses the same defaults shown above.
+
+`MouseScalingFix=1` replaces the scoped mouse fixed-point conversion with signed
+fractional accumulation for independent X and Y axes. This prevents tiny movement in
+one direction from being discarded while the opposite direction moves a whole unit.
+The hook is enabled by default, resets accumulated fractions when the scope scale
+changes or focus is lost, and leaves unscoped and whole-unit scaling on the game's
+original conversion path. Set it to `0` to disable the hook.
 
 `DPIAware=1` requests System DPI awareness before the real DirectInput entry point
 is called and before the game creates its window. The DLL tries the modern context
