@@ -15,6 +15,8 @@ namespace oval_spin_map {
 namespace {
 constexpr uintptr_t kSpinMapDrawCallRva = 0x00103849;
 constexpr uintptr_t kGameDrawPrimitiveRva = 0x001AA0D0;
+constexpr int kLineStrip = 3;
+constexpr int kTriangleStrip = 5;
 constexpr int kTriangleFan = 6;
 constexpr size_t kSegmentCount = 32;
 constexpr size_t kVertexCount = kSegmentCount + 2;
@@ -34,7 +36,7 @@ struct HudVertex {
 };
 static_assert(sizeof(HudVertex) == 40, "unexpected DFBHD HUD vertex size");
 
-using DrawPrimitiveFn = int(__cdecl *)(uint32_t, uint32_t, int, const HudVertex*, int);
+using DrawPrimitiveFn = int(__cdecl *)(int, const HudVertex*, int);
 DrawPrimitiveFn g_gameDrawPrimitive = nullptr;
 bool g_installed = false;
 
@@ -60,10 +62,9 @@ float Bilinear(float topLeft, float topRight, float bottomLeft, float bottomRigh
     return top + (bottom - top) * y;
 }
 
-int __cdecl DrawOvalSpinMap(uint32_t texture, uint32_t flags, int primitive,
-                            const HudVertex* vertices, int vertexCount) {
-    if (vertices == nullptr || vertexCount != 4) {
-        return g_gameDrawPrimitive(texture, flags, primitive, vertices, vertexCount);
+int __cdecl DrawOvalSpinMap(int primitive, const HudVertex* vertices, int vertexCount) {
+    if (primitive != kTriangleStrip || vertices == nullptr || vertexCount != 4) {
+        return g_gameDrawPrimitive(primitive, vertices, vertexCount);
     }
 
     float left = vertices[0].x;
@@ -82,7 +83,7 @@ int __cdecl DrawOvalSpinMap(uint32_t texture, uint32_t flags, int primitive,
     const float radiusX = (right - left) * 0.5f;
     const float radiusY = (bottom - top) * 0.5f;
     if (!(radiusX > 0.0f) || !(radiusY > 0.0f)) {
-        return g_gameDrawPrimitive(texture, flags, primitive, vertices, vertexCount);
+        return g_gameDrawPrimitive(primitive, vertices, vertexCount);
     }
 
     const HudVertex& topLeft = ClosestCorner(vertices, left, top);
@@ -123,8 +124,23 @@ int __cdecl DrawOvalSpinMap(uint32_t texture, uint32_t flags, int primitive,
                              normalizedX, normalizedY);
     }
 
-    return g_gameDrawPrimitive(texture, flags, kTriangleFan, fan,
-                               static_cast<int>(kVertexCount));
+    const int result = g_gameDrawPrimitive(kTriangleFan, fan,
+                                           static_cast<int>(kVertexCount));
+
+    HudVertex outline[kSegmentCount + 1] = {};
+    for (size_t index = 0; index <= kSegmentCount; ++index) {
+        outline[index] = fan[index + 1];
+        outline[index].diffuse = 0xFFFF0000;
+        outline[index].specular = 0;
+        // Sampling the map center avoids transparent texels along its original edges.
+        outline[index].u = fan[0].u;
+        outline[index].v = fan[0].v;
+        outline[index].u2 = fan[0].u2;
+        outline[index].v2 = fan[0].v2;
+    }
+    g_gameDrawPrimitive(kLineStrip, outline,
+                        static_cast<int>(kSegmentCount + 1));
+    return result;
 }
 
 bool WriteRelativeCall(unsigned char* callSite, const void* target) {
@@ -169,7 +185,8 @@ bool Install(bool enabled) {
         return false;
     }
     g_installed = true;
-    logger::Log("INFO", "OvalSpinMap", "32-segment triangle fan hook installed");
+    logger::Log("INFO", "OvalSpinMap",
+                "32-segment triangle fan hook installed with red diagnostic outline");
     return true;
 }
 

@@ -81,7 +81,8 @@ retains its legacy mouse path while cursor restoration can continue independentl
 `dinput8.ini` is missing, the DLL uses the same defaults shown above.
 
 `OvalSpinMap=1` replaces the Spin Map's rectangular four-vertex draw with a
-32-segment oval triangle fan. Its bounds still come from the game's
+32-segment oval triangle fan and draws a red diagnostic outline around it. Its
+bounds still come from the game's
 `HUDSPINMAPX1/X2/Y1/Y2` placement, and the original texture coordinates are
 interpolated across the fan so the existing map rotation is retained. At the default
 value of `0`, the original draw call is left untouched.
