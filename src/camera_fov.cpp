@@ -7,6 +7,11 @@
 #include <cstring>
 #include <limits>
 
+#if defined(_MSC_VER)
+#include <intrin.h>
+#pragma intrinsic(_ReturnAddress)
+#endif
+
 #include "logger.h"
 
 namespace camera_fov {
@@ -47,8 +52,12 @@ bool WriteRelativeJump(unsigned char *output, const void *target) {
 }
 
 void __cdecl HookBuildCamera(void *destinationCamera, void *sourceCamera) {
+#if defined(_MSC_VER)
+    const uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
+#else
     const uintptr_t caller =
         reinterpret_cast<uintptr_t>(__builtin_return_address(0));
+#endif
     int32_t *cameraFov = sourceCamera == nullptr
                              ? nullptr
                              : reinterpret_cast<int32_t *>(
