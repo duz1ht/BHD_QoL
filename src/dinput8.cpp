@@ -7,6 +7,7 @@
 #include "logger.h"
 #include "dpi_awareness.h"
 #include "borderless_fullscreen.h"
+#include "borderless_gamma.h"
 #include "game_window.h"
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
@@ -33,9 +34,10 @@ struct PatchConfig {
     bool rawMouseInput = true;
     bool restoreCursorClip = true;
     bool mouseScalingFix = true;
-    bool forceCameraFov90 = false;
+    bool useCorrectAspectFov = true;
     bool dpiAware = true;
     bool borderlessFullscreen = false;
+    bool borderlessGamma = true;
     bool forceDesktopResolution = false;
     bool loggingEnabled = false;
     unsigned long rawInputStatisticsIntervalMs = 5000;
@@ -251,11 +253,12 @@ PatchConfig LoadPatchConfig() {
     config.restoreCursorClip =
         BoolFromIni(iniPath, L"RestoreCursorClip", config.restoreCursorClip);
     config.mouseScalingFix = BoolFromIni(iniPath, L"MouseScalingFix", config.mouseScalingFix);
-    config.forceCameraFov90 =
-        BoolFromIni(iniPath, L"ForceCameraFOV90", config.forceCameraFov90);
+    config.useCorrectAspectFov =
+        BoolFromIni(iniPath, L"UseCorrectAspectFOV", config.useCorrectAspectFov);
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
     config.borderlessFullscreen =
         BoolFromIni(iniPath, L"BorderlessFullscreen", config.borderlessFullscreen);
+    config.borderlessGamma = BoolFromIni(iniPath, L"BorderlessGamma", config.borderlessGamma);
     config.forceDesktopResolution =
         BoolFromIni(iniPath, L"ForceDesktopResolution", config.forceDesktopResolution);
     config.loggingEnabled =
@@ -274,13 +277,13 @@ void ApplyBhdPatches() {
     logger::Initialize(config.loggingEnabled);
     logger::Log("INFO", "Config",
                 "NVGResolution=%d DynamicResolution=%d ClipCursorFix=%d RawMouseInput=%d "
-                "RestoreCursorClip=%d MouseScalingFix=%d ForceCameraFOV90=%d "
-                "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
+                "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
+                "DPIAware=%d BorderlessFullscreen=%d BorderlessGamma=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.nvgResolution, config.dynamicResolution, config.clipCursorFix,
                 config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
-                config.forceCameraFov90, config.dpiAware,
-                config.borderlessFullscreen, config.forceDesktopResolution,
+                config.useCorrectAspectFov, config.dpiAware,
+                config.borderlessFullscreen, config.borderlessGamma, config.forceDesktopResolution,
                 config.rawInputStatisticsIntervalMs);
     if (config.invalidStatisticsInterval) {
         logger::Log("WARN", "Config",
@@ -295,7 +298,7 @@ void ApplyBhdPatches() {
     logger::Log("INFO", "Executable", "image base validated: 0x%08lX",
                 static_cast<unsigned long>(imageBase));
     mouse_scaling_fix::Install(config.mouseScalingFix);
-    camera_fov::Install(config.forceCameraFov90);
+    camera_fov::Install(config.useCorrectAspectFov);
     dpi_awareness::Initialize(config.dpiAware);
     if (config.borderlessFullscreen && !config.dpiAware) {
         logger::Log("WARN", "BorderlessFullscreen",
@@ -304,6 +307,8 @@ void ApplyBhdPatches() {
     const bool borderlessInitialized =
         borderless_fullscreen::Initialize(config.borderlessFullscreen,
                                           config.forceDesktopResolution);
+    const bool gammaInitialized = borderless_gamma::Initialize(
+        config.borderlessFullscreen && config.borderlessGamma && borderlessInitialized);
 
     if (config.nvgResolution) {
         logger::Log("INFO", "NVGResolution", "feature enabled");
@@ -332,7 +337,9 @@ void ApplyBhdPatches() {
         raw_input::Install({config.rawMouseInput, config.rawInputStatisticsIntervalMs});
     game_window::Configure(
         {config.rawMouseInput && rawInstalled, config.restoreCursorClip,
-         config.borderlessFullscreen && borderlessInitialized, config.mouseScalingFix});
+         config.borderlessFullscreen && borderlessInitialized,
+         config.borderlessFullscreen && config.borderlessGamma && gammaInitialized,
+         config.mouseScalingFix});
 }
 
 HMODULE LoadRealDInput8() {
