@@ -12,6 +12,7 @@
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
 #include "camera_fov.h"
+#include "oval_spin_map.h"
 
 namespace {
 constexpr uintptr_t kImageBase = 0x400000;
@@ -35,6 +36,7 @@ struct PatchConfig {
     bool restoreCursorClip = true;
     bool mouseScalingFix = true;
     bool useCorrectAspectFov = true;
+    bool ovalSpinMap = false;
     bool dpiAware = true;
     bool borderlessFullscreen = false;
     bool borderlessGamma = true;
@@ -255,6 +257,7 @@ PatchConfig LoadPatchConfig() {
     config.mouseScalingFix = BoolFromIni(iniPath, L"MouseScalingFix", config.mouseScalingFix);
     config.useCorrectAspectFov =
         BoolFromIni(iniPath, L"UseCorrectAspectFOV", config.useCorrectAspectFov);
+    config.ovalSpinMap = BoolFromIni(iniPath, L"OvalSpinMap", config.ovalSpinMap);
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
     config.borderlessFullscreen =
         BoolFromIni(iniPath, L"BorderlessFullscreen", config.borderlessFullscreen);
@@ -277,12 +280,12 @@ void ApplyBhdPatches() {
     logger::Initialize(config.loggingEnabled);
     logger::Log("INFO", "Config",
                 "NVGResolution=%d DynamicResolution=%d ClipCursorFix=%d RawMouseInput=%d "
-                "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
+                "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d OvalSpinMap=%d "
                 "DPIAware=%d BorderlessFullscreen=%d BorderlessGamma=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.nvgResolution, config.dynamicResolution, config.clipCursorFix,
                 config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
-                config.useCorrectAspectFov, config.dpiAware,
+                config.useCorrectAspectFov, config.ovalSpinMap, config.dpiAware,
                 config.borderlessFullscreen, config.borderlessGamma, config.forceDesktopResolution,
                 config.rawInputStatisticsIntervalMs);
     if (config.invalidStatisticsInterval) {
@@ -299,6 +302,7 @@ void ApplyBhdPatches() {
                 static_cast<unsigned long>(imageBase));
     mouse_scaling_fix::Install(config.mouseScalingFix);
     camera_fov::Install(config.useCorrectAspectFov);
+    oval_spin_map::Install(config.ovalSpinMap);
     dpi_awareness::Initialize(config.dpiAware);
     if (config.borderlessFullscreen && !config.dpiAware) {
         logger::Log("WARN", "BorderlessFullscreen",

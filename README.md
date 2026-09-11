@@ -64,6 +64,7 @@ RawMouseInput=1
 RestoreCursorClip=1
 MouseScalingFix=1
 UseCorrectAspectFOV=1
+OvalSpinMap=0
 
 [Logging]
 Enabled=0
@@ -78,6 +79,12 @@ WndProc hooks. Either feature can be disabled without disabling the other. If th
 Input hook cannot validate the supported executable or complete registration, the DLL
 retains its legacy mouse path while cursor restoration can continue independently. If
 `dinput8.ini` is missing, the DLL uses the same defaults shown above.
+
+`OvalSpinMap=1` replaces the Spin Map's rectangular four-vertex draw with a
+32-segment oval triangle fan. Its bounds still come from the game's
+`HUDSPINMAPX1/X2/Y1/Y2` placement, and the original texture coordinates are
+interpolated across the fan so the existing map rotation is retained. At the default
+value of `0`, the original draw call is left untouched.
 
 The shared window hook also verifies the real foreground process independently of
 Alt+Tab messages. When the Start menu or another application takes foreground, it
