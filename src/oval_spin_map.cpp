@@ -13,7 +13,9 @@
 
 namespace oval_spin_map {
 namespace {
-constexpr uintptr_t kSpinMapDrawCallRva = 0x00103849;
+// RenderSpinMap() builds the single rotating map quad from HUDSPINMAPX1/X2/Y1/Y2
+// and submits it at VA 0x005035E2 in the supported executable.
+constexpr uintptr_t kSpinMapDrawCallRva = 0x001035E2;
 constexpr uintptr_t kGameDrawPrimitiveRva = 0x001AA0D0;
 constexpr int kLineStrip = 3;
 constexpr int kTriangleStrip = 5;
@@ -170,7 +172,7 @@ bool Install(bool enabled) {
     static_assert(sizeof(void*) == 4, "OvalSpinMap requires a 32-bit build");
     auto* module = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     auto* callSite = module + kSpinMapDrawCallRva;
-    const unsigned char expected[] = {0xE8, 0x82, 0x68, 0x0A, 0x00};
+    const unsigned char expected[] = {0xE8, 0xE9, 0x6A, 0x0A, 0x00};
     if (memcmp(callSite, expected, sizeof(expected)) != 0) {
         logger::Log("ERROR", "OvalSpinMap", "draw call signature mismatch address=0x%08lX",
                     reinterpret_cast<unsigned long>(callSite));
