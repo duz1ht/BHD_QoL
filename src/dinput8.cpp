@@ -9,7 +9,7 @@
 #include "borderless_fullscreen.h"
 #include "game_window.h"
 #include "raw_input.h"
-#include "scope_scale_fix.h"
+#include "mouse_scaling_fix.h"
 
 namespace {
 constexpr uintptr_t kImageBase = 0x400000;
@@ -31,7 +31,7 @@ struct PatchConfig {
     bool clipCursorFix = true;
     bool rawMouseInput = true;
     bool restoreCursorClip = true;
-    bool fixScopeScale = true;
+    bool mouseScalingFix = true;
     bool dpiAware = true;
     bool borderlessFullscreen = false;
     bool forceDesktopResolution = false;
@@ -248,7 +248,7 @@ PatchConfig LoadPatchConfig() {
     config.rawMouseInput = BoolFromIni(iniPath, L"RawMouseInput", config.rawMouseInput);
     config.restoreCursorClip =
         BoolFromIni(iniPath, L"RestoreCursorClip", config.restoreCursorClip);
-    config.fixScopeScale = BoolFromIni(iniPath, L"FixScopeScale", config.fixScopeScale);
+    config.mouseScalingFix = BoolFromIni(iniPath, L"MouseScalingFix", config.mouseScalingFix);
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
     config.borderlessFullscreen =
         BoolFromIni(iniPath, L"BorderlessFullscreen", config.borderlessFullscreen);
@@ -270,11 +270,11 @@ void ApplyBhdPatches() {
     logger::Initialize(config.loggingEnabled);
     logger::Log("INFO", "Config",
                 "NVGResolution=%d DynamicResolution=%d ClipCursorFix=%d RawMouseInput=%d "
-                "RestoreCursorClip=%d FixScopeScale=%d "
+                "RestoreCursorClip=%d MouseScalingFix=%d "
                 "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.nvgResolution, config.dynamicResolution, config.clipCursorFix,
-                config.rawMouseInput, config.restoreCursorClip, config.fixScopeScale, config.dpiAware,
+                config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix, config.dpiAware,
                 config.borderlessFullscreen, config.forceDesktopResolution,
                 config.rawInputStatisticsIntervalMs);
     if (config.invalidStatisticsInterval) {
@@ -289,7 +289,7 @@ void ApplyBhdPatches() {
     }
     logger::Log("INFO", "Executable", "image base validated: 0x%08lX",
                 static_cast<unsigned long>(imageBase));
-    scope_scale_fix::Install(config.fixScopeScale);
+    mouse_scaling_fix::Install(config.mouseScalingFix);
     dpi_awareness::Initialize(config.dpiAware);
     if (config.borderlessFullscreen && !config.dpiAware) {
         logger::Log("WARN", "BorderlessFullscreen",
@@ -326,7 +326,7 @@ void ApplyBhdPatches() {
         raw_input::Install({config.rawMouseInput, config.rawInputStatisticsIntervalMs});
     game_window::Configure(
         {config.rawMouseInput && rawInstalled, config.restoreCursorClip,
-         config.borderlessFullscreen && borderlessInitialized, config.fixScopeScale});
+         config.borderlessFullscreen && borderlessInitialized, config.mouseScalingFix});
 }
 
 HMODULE LoadRealDInput8() {

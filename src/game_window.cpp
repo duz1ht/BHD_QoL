@@ -6,7 +6,7 @@
 #include "borderless_fullscreen.h"
 #include "logger.h"
 #include "raw_input.h"
-#include "scope_scale_fix.h"
+#include "mouse_scaling_fix.h"
 
 namespace game_window {
 namespace {
@@ -33,7 +33,7 @@ void ResumeRawInputIfReady(const char* trigger) {
 }
 
 void HandleFocusLost() {
-    scope_scale_fix::Reset();
+    mouse_scaling_fix::Reset();
     if (g_settings.rawMouseInput) raw_input::HandleFocusLost();
     cursor_clip::HandleFocusLost();
 }
@@ -130,10 +130,10 @@ void Configure(const Settings& settings) {
     g_settings = settings;
     logger::Log("INFO", "GameWindow",
                 "configured RawMouseInput=%d RestoreCursorClip=%d BorderlessFullscreen=%d "
-                "FixScopeScale=%d",
+                "MouseScalingFix=%d",
                 settings.rawMouseInput, settings.restoreCursorClip, settings.borderlessFullscreen,
-                settings.fixScopeScale);
-    if ((!settings.rawMouseInput && (settings.restoreCursorClip || settings.fixScopeScale)) ||
+                settings.mouseScalingFix);
+    if ((!settings.rawMouseInput && (settings.restoreCursorClip || settings.mouseScalingFix)) ||
         settings.borderlessFullscreen) {
         HANDLE thread = CreateThread(nullptr, 0, WindowDiscoveryThread, nullptr, 0, nullptr);
         if (thread != nullptr) CloseHandle(thread);

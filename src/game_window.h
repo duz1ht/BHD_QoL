@@ -8,7 +8,7 @@ struct Settings {
     bool rawMouseInput;
     bool restoreCursorClip;
     bool borderlessFullscreen;
-    bool fixScopeScale;
+    bool mouseScalingFix;
 };
 
 void Configure(const Settings& settings);

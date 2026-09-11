@@ -61,7 +61,7 @@ DynamicResolution=1
 ClipCursorFix=1
 RawMouseInput=1
 RestoreCursorClip=1
-FixScopeScale=1
+MouseScalingFix=1
 
 [Logging]
 Enabled=0
@@ -77,7 +77,7 @@ Input hook cannot validate the supported executable or complete registration, th
 retains its legacy mouse path while cursor restoration can continue independently. If
 `dinput8.ini` is missing, the DLL uses the same defaults shown above.
 
-`FixScopeScale=1` replaces the scoped mouse fixed-point conversion with signed
+`MouseScalingFix=1` replaces the scoped mouse fixed-point conversion with signed
 fractional accumulation for independent X and Y axes. This prevents tiny movement in
 one direction from being discarded while the opposite direction moves a whole unit.
 The hook is enabled by default, resets accumulated fractions when the scope scale

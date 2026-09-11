@@ -1,4 +1,4 @@
-#include "scope_scale_fix.h"
+#include "mouse_scaling_fix.h"
 
 #include <windows.h>
 
@@ -9,7 +9,7 @@
 
 #include "logger.h"
 
-namespace scope_scale_fix {
+namespace mouse_scaling_fix {
 namespace {
 constexpr uintptr_t kMouseScaleAddress = 0x009F20E4;
 constexpr size_t kHookLength = 25;
@@ -189,7 +189,7 @@ bool InstallHook(unsigned char *hook) {
     return false;
   }
 
-  logger::Log("INFO", "FixScopeScale",
+  logger::Log("INFO", "MouseScalingFix",
               "hook installed address=0x%08lX trampoline=0x%08lX",
               reinterpret_cast<unsigned long>(hook),
               reinterpret_cast<unsigned long>(trampoline));
@@ -206,22 +206,22 @@ void Reset() {
 
 bool Install(bool enabled) {
   if (!enabled) {
-    logger::Log("INFO", "FixScopeScale", "feature disabled");
+    logger::Log("INFO", "MouseScalingFix", "feature disabled");
     return false;
   }
-  logger::Log("INFO", "FixScopeScale", "feature enabled");
+  logger::Log("INFO", "MouseScalingFix", "feature enabled");
   unsigned char *hook = FindScaleBlock(GetModuleHandleW(nullptr));
   if (hook == nullptr) {
-    logger::Log("ERROR", "FixScopeScale",
+    logger::Log("ERROR", "MouseScalingFix",
                 "expected a unique scoped scaling signature");
     return false;
   }
   if (!InstallHook(hook)) {
-    logger::Log("ERROR", "FixScopeScale", "hook installation failed: error=%lu",
+    logger::Log("ERROR", "MouseScalingFix", "hook installation failed: error=%lu",
                 GetLastError());
     return false;
   }
   return true;
 }
 
-} // namespace scope_scale_fix
+} // namespace mouse_scaling_fix
