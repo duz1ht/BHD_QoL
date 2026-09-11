@@ -37,7 +37,6 @@ struct PatchConfig {
     bool useCorrectAspectFov = true;
     bool dpiAware = true;
     bool borderlessFullscreen = false;
-    bool borderlessGamma = true;
     bool forceDesktopResolution = false;
     bool loggingEnabled = false;
     unsigned long rawInputStatisticsIntervalMs = 5000;
@@ -258,7 +257,6 @@ PatchConfig LoadPatchConfig() {
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
     config.borderlessFullscreen =
         BoolFromIni(iniPath, L"BorderlessFullscreen", config.borderlessFullscreen);
-    config.borderlessGamma = BoolFromIni(iniPath, L"BorderlessGamma", config.borderlessGamma);
     config.forceDesktopResolution =
         BoolFromIni(iniPath, L"ForceDesktopResolution", config.forceDesktopResolution);
     config.loggingEnabled =
@@ -278,12 +276,12 @@ void ApplyBhdPatches() {
     logger::Log("INFO", "Config",
                 "NVGResolution=%d DynamicResolution=%d ClipCursorFix=%d RawMouseInput=%d "
                 "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
-                "DPIAware=%d BorderlessFullscreen=%d BorderlessGamma=%d ForceDesktopResolution=%d "
+                "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.nvgResolution, config.dynamicResolution, config.clipCursorFix,
                 config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
                 config.useCorrectAspectFov, config.dpiAware,
-                config.borderlessFullscreen, config.borderlessGamma, config.forceDesktopResolution,
+                config.borderlessFullscreen, config.forceDesktopResolution,
                 config.rawInputStatisticsIntervalMs);
     if (config.invalidStatisticsInterval) {
         logger::Log("WARN", "Config",
@@ -308,7 +306,7 @@ void ApplyBhdPatches() {
         borderless_fullscreen::Initialize(config.borderlessFullscreen,
                                           config.forceDesktopResolution);
     const bool gammaInitialized = borderless_gamma::Initialize(
-        config.borderlessFullscreen && config.borderlessGamma && borderlessInitialized);
+        config.borderlessFullscreen && borderlessInitialized);
 
     if (config.nvgResolution) {
         logger::Log("INFO", "NVGResolution", "feature enabled");
@@ -338,7 +336,7 @@ void ApplyBhdPatches() {
     game_window::Configure(
         {config.rawMouseInput && rawInstalled, config.restoreCursorClip,
          config.borderlessFullscreen && borderlessInitialized,
-         config.borderlessFullscreen && config.borderlessGamma && gammaInitialized,
+         config.borderlessFullscreen && gammaInitialized,
          config.mouseScalingFix});
 }
 
