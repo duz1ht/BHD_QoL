@@ -62,6 +62,7 @@ ClipCursorFix=1
 RawMouseInput=1
 RestoreCursorClip=1
 MouseScalingFix=1
+ForceCameraFOV90=0
 
 [Logging]
 Enabled=0
@@ -83,6 +84,13 @@ one direction from being discarded while the opposite direction moves a whole un
 The hook is enabled by default, resets accumulated fractions when the scope scale
 changes or focus is lost, and leaves unscoped and whole-unit scaling on the game's
 original conversion path. Set it to `0` to disable the hook.
+
+`ForceCameraFOV90=1` renders the normal first-person camera and its visibility
+frustum at 90 degrees while leaving the gameplay and network FOV at the original
+80 degrees. The override applies only when the current, target, and temporary
+camera FOV values are all exactly 80 degrees, preserving scopes, zoom, special
+cameras, transitions, and map-controlled FOV values. It defaults to `0`; set it
+to `1` to install the client-only camera hook.
 
 `DPIAware=1` requests System DPI awareness before the real DirectInput entry point
 is called and before the game creates its window. The DLL tries the modern context
