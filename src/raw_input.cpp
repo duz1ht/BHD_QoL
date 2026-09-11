@@ -230,6 +230,8 @@ void SuspendInput() {
     logger::Log("INFO", "RawInput", "input suspended and transient state cleared");
 }
 
+bool RegisterForWindow(HWND window);
+
 bool ResumeInput(const char* trigger, bool clipReady) {
     HWND focusedWindow = nullptr;
     const bool hasInputFocus = WindowHasInputFocus(&focusedWindow);
@@ -246,6 +248,13 @@ bool ResumeInput(const char* trigger, bool clipReady) {
                     trigger, clipReady, GetForegroundWindow() == g_window, hasInputFocus,
                     reinterpret_cast<unsigned long>(focusedWindow), focusThread, focusProcess,
                     g_window && IsWindowVisible(g_window), g_window && IsIconic(g_window));
+        return false;
+    }
+    if (InterlockedCompareExchange(&g_registered, 0, 0) == 0 &&
+        !RegisterForWindow(g_window)) {
+        InterlockedExchange(&g_backendState, kRecoveryPending);
+        logger::Log("ERROR", "RawInput", "resume=deferred trigger=%s registration_failed=1",
+                    trigger);
         return false;
     }
     if (InterlockedCompareExchange(&g_backendState, kInactive, kInactive) == kActive) {
@@ -273,7 +282,6 @@ bool RegisterForWindow(HWND window) {
         logger::Log("ERROR", "RawInput",
                     "RegisterRawInputDevices flags=NOLEGACY|CAPTUREMOUSE failed: error=%lu",
                     GetLastError());
-        g_window = nullptr;
         return false;
     }
     InterlockedExchange(&g_registered, 1);
@@ -402,9 +410,13 @@ bool Install(const Settings& settings) {
 
 bool AttachWindow(HWND window) { return RegisterForWindow(window); }
 void HandleRawInput(HRAWINPUT input) { ProcessRawInput(input); }
-void HandleFocusLost() { if (g_enabled) SuspendInput(); }
-void HandleFocusGained(const char* trigger, bool clipReady) {
-    if (g_enabled) ResumeInput(trigger, clipReady);
+void HandleFocusLost() {
+    if (!g_enabled) return;
+    SuspendInput();
+    UnregisterRawInput();
+}
+bool HandleFocusGained(const char* trigger, bool clipReady) {
+    return !g_enabled || ResumeInput(trigger, clipReady);
 }
 void HandleDestroy() {
     if (!g_enabled) return;

@@ -22,8 +22,18 @@ constexpr UINT_PTR kBorderlessVerificationTimer = 0xB4D;
 constexpr UINT_PTR kBorderlessGammaTimer = 0xB4E;
 constexpr UINT_PTR kForegroundVerificationTimer = 0xB4F;
 unsigned int g_borderlessVerificationTicks = 0;
-bool g_gameActive = false;
-bool g_foregroundStateKnown = false;
+enum class ActivationState { Unknown, Inactive, ActivationPending, Active };
+ActivationState g_activationState = ActivationState::Unknown;
+
+const char* ActivationStateName(ActivationState state) {
+    switch (state) {
+        case ActivationState::Unknown: return "unknown";
+        case ActivationState::Inactive: return "inactive";
+        case ActivationState::ActivationPending: return "activation_pending";
+        case ActivationState::Active: return "active";
+    }
+    return "invalid";
+}
 
 bool IsGameForeground(HWND* foregroundResult = nullptr, HWND* rootResult = nullptr,
                       DWORD* processResult = nullptr) {
@@ -38,19 +48,26 @@ bool IsGameForeground(HWND* foregroundResult = nullptr, HWND* rootResult = nullp
            (root == g_window || process == GetCurrentProcessId());
 }
 
-void TryResume(const char* trigger) {
-    cursor_visibility::HandleGameActivated(trigger);
-    const bool clipReady = cursor_clip::HandleFocusGained(trigger);
-    if (g_settings.rawMouseInput && clipReady) {
-        raw_input::HandleFocusGained(trigger, true);
-    }
-    if (g_settings.borderlessGamma) borderless_gamma::HandleFocusGained(g_window, trigger);
+bool WindowHasInputFocus() {
+    const HWND focus = GetFocus();
+    return GetForegroundWindow() == g_window &&
+           (focus == g_window || (focus != nullptr && GetAncestor(focus, GA_ROOT) == g_window));
 }
 
-void ResumeRawInputIfReady(const char* trigger) {
-    if (g_settings.rawMouseInput && cursor_clip::IsReady()) {
-        raw_input::HandleFocusGained(trigger, true);
+bool TryResume(const char* trigger) {
+    if (!WindowHasInputFocus()) {
+        logger::Log("INFO", "GameWindow",
+                    "activation=deferred trigger=%s foreground=0x%08lX focus=0x%08lX",
+                    trigger, reinterpret_cast<unsigned long>(GetForegroundWindow()),
+                    reinterpret_cast<unsigned long>(GetFocus()));
+        return false;
     }
+    const bool clipReady = cursor_clip::HandleFocusGained(trigger);
+    if (!clipReady) return false;
+    if (g_settings.rawMouseInput && !raw_input::HandleFocusGained(trigger, true)) return false;
+    cursor_visibility::HandleGameActivated(trigger);
+    if (g_settings.borderlessGamma) borderless_gamma::HandleFocusGained(g_window, trigger);
+    return true;
 }
 
 void HandleFocusLost(const char* trigger) {
@@ -65,18 +82,36 @@ void UpdateForegroundState(const char* trigger) {
     HWND foreground = nullptr;
     HWND root = nullptr;
     DWORD process = 0;
-    const bool active = IsGameForeground(&foreground, &root, &process);
-    if (g_foregroundStateKnown && active == g_gameActive) return;
-    logger::Log("INFO", "GameWindow",
-                "trigger=%s foreground_transition=%s foreground=0x%08lX root=0x%08lX "
-                "process=%lu",
-                trigger, active ? "active" : "inactive",
-                reinterpret_cast<unsigned long>(foreground),
-                reinterpret_cast<unsigned long>(root), process);
-    g_gameActive = active;
-    g_foregroundStateKnown = true;
-    if (active) TryResume(trigger);
-    else HandleFocusLost(trigger);
+    const bool foregroundIsGame = IsGameForeground(&foreground, &root, &process);
+    if (!foregroundIsGame) {
+        if (g_activationState == ActivationState::Inactive) return;
+        const ActivationState previous = g_activationState;
+        g_activationState = ActivationState::Inactive;
+        logger::Log("INFO", "GameWindow",
+                    "trigger=%s activation=%s->inactive foreground=0x%08lX root=0x%08lX "
+                    "process=%lu",
+                    trigger, ActivationStateName(previous),
+                    reinterpret_cast<unsigned long>(foreground),
+                    reinterpret_cast<unsigned long>(root), process);
+        HandleFocusLost(trigger);
+        return;
+    }
+
+    if (g_activationState == ActivationState::Active) return;
+    if (g_activationState != ActivationState::ActivationPending) {
+        const ActivationState previous = g_activationState;
+        g_activationState = ActivationState::ActivationPending;
+        logger::Log("INFO", "GameWindow",
+                    "trigger=%s activation=%s->activation_pending foreground=0x%08lX "
+                    "root=0x%08lX process=%lu",
+                    trigger, ActivationStateName(previous),
+                    reinterpret_cast<unsigned long>(foreground),
+                    reinterpret_cast<unsigned long>(root), process);
+    }
+    if (TryResume(trigger)) {
+        g_activationState = ActivationState::Active;
+        logger::Log("INFO", "GameWindow", "trigger=%s activation=completed", trigger);
+    }
 }
 
 void HandleInitialFocusRecovery(HWND window) {
@@ -94,7 +129,7 @@ void HandleInitialFocusRecovery(HWND window) {
                     reinterpret_cast<unsigned long>(previousFocus),
                     reinterpret_cast<unsigned long>(GetFocus()), error);
     }
-    TryResume("initial_focus_recovery");
+    UpdateForegroundState("initial_focus_recovery");
 }
 
 LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -125,19 +160,21 @@ LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM 
             borderless_fullscreen::Apply(window,
                 message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
             cursor_clip::HandleWindowChanged(message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
-            ResumeRawInputIfReady(message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
-            if (message == WM_DISPLAYCHANGE && g_settings.borderlessGamma)
+            UpdateForegroundState(message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
+            if (message == WM_DISPLAYCHANGE && g_settings.borderlessGamma &&
+                g_activationState == ActivationState::Active)
                 borderless_gamma::HandleDisplayChanged(window, "WM_DISPLAYCHANGE");
             break;
         case WM_SIZE:
             if (wParam != SIZE_MINIMIZED) borderless_fullscreen::Apply(window, "WM_SIZE");
             cursor_clip::HandleWindowChanged(wParam == SIZE_MINIMIZED ? "WM_SIZE_MINIMIZED" : "WM_SIZE");
-            if (wParam != SIZE_MINIMIZED) ResumeRawInputIfReady("WM_SIZE");
+            UpdateForegroundState(wParam == SIZE_MINIMIZED ? "WM_SIZE_MINIMIZED" : "WM_SIZE");
             break;
         case WM_TIMER:
             if (wParam == kForegroundVerificationTimer)
                 UpdateForegroundState("foreground_timer");
-            if (wParam == kBorderlessGammaTimer) borderless_gamma::Poll(window);
+            if (wParam == kBorderlessGammaTimer &&
+                g_activationState == ActivationState::Active) borderless_gamma::Poll(window);
             if (wParam == kBorderlessVerificationTimer) {
                 borderless_fullscreen::Apply(window, "verification_timer");
                 if (++g_borderlessVerificationTicks >= 20) {
@@ -146,8 +183,8 @@ LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM 
             }
             break;
         case WM_DESTROY:
-            if (g_gameActive) {
-                g_gameActive = false;
+            if (g_activationState != ActivationState::Inactive) {
+                g_activationState = ActivationState::Inactive;
                 HandleFocusLost("WM_DESTROY");
             }
             break;
@@ -162,7 +199,7 @@ LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM 
             cursor_visibility::Shutdown();
             g_window = nullptr;
             g_originalWndProc = nullptr;
-            g_foregroundStateKnown = false;
+            g_activationState = ActivationState::Unknown;
             InterlockedExchange(&g_installing, 0);
             break;
     }
@@ -211,8 +248,7 @@ bool EnsureInstalled(HWND window) {
     }
     g_window = window;
     g_originalWndProc = reinterpret_cast<WNDPROC>(previous);
-    g_gameActive = false;
-    g_foregroundStateKnown = false;
+    g_activationState = ActivationState::Unknown;
     logger::Log("INFO", "GameWindow", "shared WndProc installed hwnd=0x%08lX",
                 reinterpret_cast<unsigned long>(window));
     borderless_fullscreen::Apply(window, "initialization");

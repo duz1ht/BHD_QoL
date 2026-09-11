@@ -81,9 +81,10 @@ retains its legacy mouse path while cursor restoration can continue independentl
 
 The shared window hook also verifies the real foreground process independently of
 Alt+Tab messages. When the Start menu or another application takes foreground, it
-releases cursor confinement, suspends game input, and temporarily balances the game's
-hidden-cursor state so the Windows cursor remains visible. Only those compensating
-visibility changes are undone when the game becomes active again.
+releases cursor confinement, suspends game input, unregisters mouse capture, and
+temporarily balances the game's hidden-cursor state so the Windows cursor remains
+visible. Capture, gamma, and the compensating visibility changes are restored only
+after the game has regained both foreground and input focus.
 
 `MouseScalingFix=1` replaces the scoped mouse fixed-point conversion with signed
 fractional accumulation for independent X and Y axes. This prevents tiny movement in
