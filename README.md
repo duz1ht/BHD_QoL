@@ -65,6 +65,9 @@ RestoreCursorClip=1
 MouseScalingFix=1
 UseCorrectAspectFOV=1
 
+; Disables the Spin Map’s circular depth mask, allowing the full rectangular map area to be rendered.
+DisableSpinMapMask=0
+
 [Logging]
 Enabled=0
 RawInputStatisticsIntervalMs=5000
@@ -101,6 +104,12 @@ applies only when the current, target, and temporary camera FOV values are all
 exactly 80 degrees, preserving scopes, zoom, special cameras, transitions, and
 map-controlled FOV values. It defaults to `1`; set it to `0` to disable the
 client-only camera hook.
+
+`DisableSpinMapMask` defaults to `0`. Set it to `1` to skip only the Spin Map's
+circular depth-mask draw submission, allowing the full rectangular viewport to be
+rendered. The patch leaves the viewport setup, Spin Map content, compass graphics,
+later depth states, and viewport restoration unchanged; it does not globally disable
+depth testing or `ZWRITEENABLE`.
 
 `DPIAware=1` requests System DPI awareness before the real DirectInput entry point
 is called and before the game creates its window. The DLL tries the modern context

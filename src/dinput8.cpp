@@ -21,6 +21,7 @@ constexpr uintptr_t kPatchAddressHeightStore = 0x52A956;
 constexpr uintptr_t kPatchAddressLoadingGameDynamicResolution = 0x4BC711;
 constexpr uintptr_t kPatchAddressInitializeInGameSystemsClipCursor = 0x4623D2;
 constexpr uintptr_t kPatchAddressClipCursorToViewPort = 0x4628D3;
+constexpr uintptr_t kPatchAddressSpinMapMaskDraw = 0x509973;
 constexpr uintptr_t kDynamicResolutionCodeCave = 0x5E4879;
 constexpr uintptr_t kInitialClipCursorCodeCave = 0x5E4912;
 constexpr uintptr_t kClipCursorCodeCave = 0x5E492B;
@@ -35,6 +36,7 @@ struct PatchConfig {
     bool restoreCursorClip = true;
     bool mouseScalingFix = true;
     bool useCorrectAspectFov = true;
+    bool disableSpinMapMask = false;
     bool dpiAware = true;
     bool borderlessFullscreen = false;
     bool borderlessGamma = true;
@@ -94,6 +96,8 @@ const unsigned char kInitialClipCursorExpected[] = {0xC7, 0x45, 0xF8, 0x7F, 0x02
 const unsigned char kInitialClipCursorReplacement[] = {0xE9, 0x3B, 0x25, 0x18, 0x00, 0x90, 0x90};
 const unsigned char kClipCursorExpected[] = {0xC7, 0x45, 0xF8, 0x7F, 0x02, 0x00, 0x00};
 const unsigned char kClipCursorReplacement[] = {0xE9, 0x53, 0x20, 0x18, 0x00, 0x90, 0x90};
+const unsigned char kSpinMapMaskDrawExpected[] = {0xE8, 0xA8, 0x09, 0x0A, 0x00};
+const unsigned char kSpinMapMaskDrawReplacement[] = {0x90, 0x90, 0x90, 0x90, 0x90};
 
 const Patch kNvgPatches[] = {
     {"Increase NVG viewport width immediate", "SetupNVGViewPort(): MOV EAX,0x200 -> MOV EAX,0x800",
@@ -148,6 +152,15 @@ const Patch kClipCursorPatches[] = {
     {"Use dynamic resolution when clipping cursor to viewport",
      "ClipCursorToViewPort(): MOV DWORD PTR [EBP + -0x8],0x27F -> JMP 005E492B",
      kPatchAddressClipCursorToViewPort, BYTE_SPAN(kClipCursorExpected), BYTE_SPAN(kClipCursorReplacement), false},
+};
+
+const Patch kSpinMapMaskDrawPatch = {
+    "Disable Spin Map circular depth mask",
+    "Spin Map renderer: skip only the circular depth-mask draw submission.",
+    kPatchAddressSpinMapMaskDraw,
+    BYTE_SPAN(kSpinMapMaskDrawExpected),
+    BYTE_SPAN(kSpinMapMaskDrawReplacement),
+    false,
 };
 
 bool BytesEqual(const unsigned char* current, ByteSpan expected) {
@@ -255,6 +268,8 @@ PatchConfig LoadPatchConfig() {
     config.mouseScalingFix = BoolFromIni(iniPath, L"MouseScalingFix", config.mouseScalingFix);
     config.useCorrectAspectFov =
         BoolFromIni(iniPath, L"UseCorrectAspectFOV", config.useCorrectAspectFov);
+    config.disableSpinMapMask =
+        BoolFromIni(iniPath, L"DisableSpinMapMask", config.disableSpinMapMask);
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
     config.borderlessFullscreen =
         BoolFromIni(iniPath, L"BorderlessFullscreen", config.borderlessFullscreen);
@@ -278,11 +293,12 @@ void ApplyBhdPatches() {
     logger::Log("INFO", "Config",
                 "NVGResolution=%d DynamicResolution=%d ClipCursorFix=%d RawMouseInput=%d "
                 "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
+                "DisableSpinMapMask=%d "
                 "DPIAware=%d BorderlessFullscreen=%d BorderlessGamma=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.nvgResolution, config.dynamicResolution, config.clipCursorFix,
                 config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
-                config.useCorrectAspectFov, config.dpiAware,
+                config.useCorrectAspectFov, config.disableSpinMapMask, config.dpiAware,
                 config.borderlessFullscreen, config.borderlessGamma, config.forceDesktopResolution,
                 config.rawInputStatisticsIntervalMs);
     if (config.invalidStatisticsInterval) {
@@ -299,6 +315,12 @@ void ApplyBhdPatches() {
                 static_cast<unsigned long>(imageBase));
     mouse_scaling_fix::Install(config.mouseScalingFix);
     camera_fov::Install(config.useCorrectAspectFov);
+    if (config.disableSpinMapMask) {
+        logger::Log("INFO", "DisableSpinMapMask", "feature enabled");
+        ApplyPatch(kSpinMapMaskDrawPatch);
+    } else {
+        logger::Log("INFO", "DisableSpinMapMask", "feature disabled");
+    }
     dpi_awareness::Initialize(config.dpiAware);
     if (config.borderlessFullscreen && !config.dpiAware) {
         logger::Log("WARN", "BorderlessFullscreen",
