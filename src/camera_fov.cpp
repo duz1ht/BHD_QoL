@@ -22,6 +22,8 @@ constexpr uintptr_t kBuildCameraRva = 0x000181A0;
 constexpr uintptr_t kMainRendererReturnRva = 0x000B751F;
 constexpr uintptr_t kCurrentFovRva = 0x007635A0;
 constexpr uintptr_t kTargetFovRva = 0x007635A4;
+// Camera mode lives at VA 0x007F2DD0 in the supported image (base 0x00400000).
+constexpr uintptr_t kCameraModeRva = 0x003F2DD0;
 constexpr uintptr_t kRenderWidthRva = 0x005F72C0;
 constexpr uintptr_t kRenderHeightRva = 0x005F72C4;
 constexpr size_t kCameraFovOffset = 0x3C;
@@ -40,7 +42,7 @@ uintptr_t g_moduleBase = 0;
 bool g_installed = false;
 LONG g_cachedWidth = -1;
 LONG g_cachedHeight = -1;
-int32_t g_cachedFov = kVanillaFovQ16;
+int32_t g_cachedFirstPersonFov = kVanillaFovQ16;
 
 void GetDisplayedSize(LONG* width, LONG* height) {
     if (borderless_fullscreen::GetOutputSize(width, height)) return;
@@ -52,14 +54,17 @@ int32_t GetCorrectedFov() {
     LONG width = 0;
     LONG height = 0;
     GetDisplayedSize(&width, &height);
-    if (width == g_cachedWidth && height == g_cachedHeight) return g_cachedFov;
+    if (width == g_cachedWidth && height == g_cachedHeight) {
+        return g_cachedFirstPersonFov;
+    }
     g_cachedWidth = width;
     g_cachedHeight = height;
-    g_cachedFov = CorrectHorizontalFovQ16(width, height);
+    g_cachedFirstPersonFov = CorrectHorizontalFovQ16(width, height);
     logger::Log("INFO", "UseCorrectAspectFOV",
                 "display_size=%ldx%ld visual_fov=%.2f gameplay_fov=80",
-                width, height, static_cast<double>(g_cachedFov) / 65536.0);
-    return g_cachedFov;
+                width, height,
+                static_cast<double>(g_cachedFirstPersonFov) / 65536.0);
+    return g_cachedFirstPersonFov;
 }
 
 bool WriteRelativeJump(unsigned char *output, const void *target) {
@@ -91,9 +96,12 @@ void __cdecl HookBuildCamera(void *destinationCamera, void *sourceCamera) {
         reinterpret_cast<const volatile int32_t *>(g_moduleBase + kCurrentFovRva);
     const auto *targetFov =
         reinterpret_cast<const volatile int32_t *>(g_moduleBase + kTargetFovRva);
+    const auto *cameraMode =
+        reinterpret_cast<const volatile int32_t *>(g_moduleBase + kCameraModeRva);
 
     const bool overrideFov =
         caller == g_moduleBase + kMainRendererReturnRva && cameraFov != nullptr &&
+        *cameraMode == 0 &&
         *currentFov == kVanillaFovQ16 && *targetFov == kVanillaFovQ16 &&
         *cameraFov == kVanillaFovQ16;
     const int32_t originalFov = overrideFov ? *cameraFov : 0;
