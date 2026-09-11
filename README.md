@@ -63,7 +63,7 @@ ClipCursorFix=1
 RawMouseInput=1
 RestoreCursorClip=1
 MouseScalingFix=1
-ForceCameraFOV90=0
+UseCorrectAspectFOV=1
 
 [Logging]
 Enabled=0
@@ -86,12 +86,14 @@ The hook is enabled by default, resets accumulated fractions when the scope scal
 changes or focus is lost, and leaves unscoped and whole-unit scaling on the game's
 original conversion path. Set it to `0` to disable the hook.
 
-`ForceCameraFOV90=1` renders the normal first-person camera and its visibility
-frustum at 90 degrees while leaving the gameplay and network FOV at the original
-80 degrees. The override applies only when the current, target, and temporary
-camera FOV values are all exactly 80 degrees, preserving scopes, zoom, special
-cameras, transitions, and map-controlled FOV values. It defaults to `0`; set it
-to `1` to install the client-only camera hook.
+`UseCorrectAspectFOV=1` preserves the vertical framing of the original 80-degree
+horizontal FOV at 4:3 and expands the horizontal FOV for wider displayed aspect
+ratios. Borderless mode uses the physical output size, so correction remains
+accurate when a 4:3 internal resolution is stretched to widescreen. The override
+applies only when the current, target, and temporary camera FOV values are all
+exactly 80 degrees, preserving scopes, zoom, special cameras, transitions, and
+map-controlled FOV values. It defaults to `1`; set it to `0` to disable the
+client-only camera hook.
 
 `DPIAware=1` requests System DPI awareness before the real DirectInput entry point
 is called and before the game creates its window. The DLL tries the modern context

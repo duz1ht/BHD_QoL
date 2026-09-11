@@ -7,6 +7,8 @@
 #include <cstring>
 #include <limits>
 
+#include "borderless_fullscreen.h"
+#include "camera_fov_math.h"
 #if defined(_MSC_VER)
 #include <intrin.h>
 #pragma intrinsic(_ReturnAddress)
@@ -20,10 +22,10 @@ constexpr uintptr_t kBuildCameraRva = 0x000181A0;
 constexpr uintptr_t kMainRendererReturnRva = 0x000B751F;
 constexpr uintptr_t kCurrentFovRva = 0x007635A0;
 constexpr uintptr_t kTargetFovRva = 0x007635A4;
+constexpr uintptr_t kRenderWidthRva = 0x005F72C0;
+constexpr uintptr_t kRenderHeightRva = 0x005F72C4;
 constexpr size_t kCameraFovOffset = 0x3C;
 constexpr size_t kHookLength = 9;
-constexpr int32_t kFov80 = 0x00500000;
-constexpr int32_t kFov90 = 0x005A0000;
 
 const unsigned char kBuildCameraSignature[kHookLength] = {
     0x55,                         // push ebp
@@ -36,6 +38,29 @@ using BuildCameraFn = void(__cdecl *)(void *, void *);
 BuildCameraFn g_originalBuildCamera = nullptr;
 uintptr_t g_moduleBase = 0;
 bool g_installed = false;
+LONG g_cachedWidth = -1;
+LONG g_cachedHeight = -1;
+int32_t g_cachedFov = kVanillaFovQ16;
+
+void GetDisplayedSize(LONG* width, LONG* height) {
+    if (borderless_fullscreen::GetOutputSize(width, height)) return;
+    *width = *reinterpret_cast<const volatile LONG*>(g_moduleBase + kRenderWidthRva);
+    *height = *reinterpret_cast<const volatile LONG*>(g_moduleBase + kRenderHeightRva);
+}
+
+int32_t GetCorrectedFov() {
+    LONG width = 0;
+    LONG height = 0;
+    GetDisplayedSize(&width, &height);
+    if (width == g_cachedWidth && height == g_cachedHeight) return g_cachedFov;
+    g_cachedWidth = width;
+    g_cachedHeight = height;
+    g_cachedFov = CorrectHorizontalFovQ16(width, height);
+    logger::Log("INFO", "UseCorrectAspectFOV",
+                "display_size=%ldx%ld visual_fov=%.2f gameplay_fov=80",
+                width, height, static_cast<double>(g_cachedFov) / 65536.0);
+    return g_cachedFov;
+}
 
 bool WriteRelativeJump(unsigned char *output, const void *target) {
     const intptr_t displacement =
@@ -69,10 +94,11 @@ void __cdecl HookBuildCamera(void *destinationCamera, void *sourceCamera) {
 
     const bool overrideFov =
         caller == g_moduleBase + kMainRendererReturnRva && cameraFov != nullptr &&
-        *currentFov == kFov80 && *targetFov == kFov80 && *cameraFov == kFov80;
+        *currentFov == kVanillaFovQ16 && *targetFov == kVanillaFovQ16 &&
+        *cameraFov == kVanillaFovQ16;
     const int32_t originalFov = overrideFov ? *cameraFov : 0;
     if (overrideFov) {
-        *cameraFov = kFov90;
+        *cameraFov = GetCorrectedFov();
     }
 
     g_originalBuildCamera(destinationCamera, sourceCamera);
@@ -121,32 +147,32 @@ bool InstallHook(unsigned char *hook) {
 
 bool Install(bool enabled) {
     if (!enabled) {
-        logger::Log("INFO", "ForceCameraFOV90", "feature disabled");
+        logger::Log("INFO", "UseCorrectAspectFOV", "feature disabled");
         return false;
     }
     if (g_installed) {
-        logger::Log("INFO", "ForceCameraFOV90", "hook already installed");
+        logger::Log("INFO", "UseCorrectAspectFOV", "hook already installed");
         return true;
     }
 
-    static_assert(sizeof(void *) == 4, "ForceCameraFOV90 requires a 32-bit build");
+    static_assert(sizeof(void *) == 4, "UseCorrectAspectFOV requires a 32-bit build");
     g_moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     auto *hook = reinterpret_cast<unsigned char *>(g_moduleBase + kBuildCameraRva);
     if (memcmp(hook, kBuildCameraSignature, sizeof(kBuildCameraSignature)) != 0) {
-        logger::Log("ERROR", "ForceCameraFOV90",
+        logger::Log("ERROR", "UseCorrectAspectFOV",
                     "camera builder signature mismatch address=0x%08lX",
                     reinterpret_cast<unsigned long>(hook));
         return false;
     }
     if (!InstallHook(hook)) {
-        logger::Log("ERROR", "ForceCameraFOV90", "hook installation failed: error=%lu",
+        logger::Log("ERROR", "UseCorrectAspectFOV", "hook installation failed: error=%lu",
                     GetLastError());
         return false;
     }
 
     g_installed = true;
-    logger::Log("INFO", "ForceCameraFOV90",
-                "hook installed address=0x%08lX visual_fov=90 gameplay_fov=80",
+    logger::Log("INFO", "UseCorrectAspectFOV",
+                "hook installed address=0x%08lX reference_fov=80 reference_aspect=4:3",
                 reinterpret_cast<unsigned long>(hook));
     return true;
 }

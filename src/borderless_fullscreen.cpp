@@ -355,4 +355,14 @@ bool Apply(HWND window, const char* trigger) {
     return positioned != FALSE;
 }
 
+bool GetOutputSize(LONG* width, LONG* height) {
+    if (!g_enabled || width == nullptr || height == nullptr) return false;
+    const LONG currentWidth = InterlockedCompareExchange(&g_monitorWidth, 0, 0);
+    const LONG currentHeight = InterlockedCompareExchange(&g_monitorHeight, 0, 0);
+    if (currentWidth <= 0 || currentHeight <= 0) return false;
+    *width = currentWidth;
+    *height = currentHeight;
+    return true;
+}
+
 }  // namespace borderless_fullscreen
