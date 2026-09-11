@@ -4,6 +4,7 @@
 
 #include "cursor_clip.h"
 #include "borderless_fullscreen.h"
+#include "borderless_gamma.h"
 #include "logger.h"
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
@@ -17,6 +18,7 @@ volatile LONG g_installing = 0;
 constexpr uintptr_t kGameWindow = 0x00F654FC;
 constexpr UINT kInitialFocusRecoveryMessage = WM_APP + 0x42;
 constexpr UINT_PTR kBorderlessVerificationTimer = 0xB4D;
+constexpr UINT_PTR kBorderlessGammaTimer = 0xB4E;
 unsigned int g_borderlessVerificationTicks = 0;
 
 void TryResume(const char* trigger) {
@@ -24,6 +26,7 @@ void TryResume(const char* trigger) {
     if (g_settings.rawMouseInput && clipReady) {
         raw_input::HandleFocusGained(trigger, true);
     }
+    if (g_settings.borderlessGamma) borderless_gamma::HandleFocusGained(g_window, trigger);
 }
 
 void ResumeRawInputIfReady(const char* trigger) {
@@ -33,6 +36,7 @@ void ResumeRawInputIfReady(const char* trigger) {
 }
 
 void HandleFocusLost() {
+    if (g_settings.borderlessGamma) borderless_gamma::HandleFocusLost("focus_lost");
     mouse_scaling_fix::Reset();
     if (g_settings.rawMouseInput) raw_input::HandleFocusLost();
     cursor_clip::HandleFocusLost();
@@ -87,6 +91,8 @@ LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM 
                 message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
             cursor_clip::HandleWindowChanged(message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
             ResumeRawInputIfReady(message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
+            if (message == WM_DISPLAYCHANGE && g_settings.borderlessGamma)
+                borderless_gamma::HandleDisplayChanged(window, "WM_DISPLAYCHANGE");
             break;
         case WM_SIZE:
             if (wParam != SIZE_MINIMIZED) borderless_fullscreen::Apply(window, "WM_SIZE");
@@ -94,6 +100,7 @@ LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM 
             if (wParam != SIZE_MINIMIZED) ResumeRawInputIfReady("WM_SIZE");
             break;
         case WM_TIMER:
+            if (wParam == kBorderlessGammaTimer) borderless_gamma::Poll(window);
             if (wParam == kBorderlessVerificationTimer) {
                 borderless_fullscreen::Apply(window, "verification_timer");
                 if (++g_borderlessVerificationTicks >= 20) {
@@ -105,6 +112,10 @@ LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM 
             HandleFocusLost();
             break;
         case WM_NCDESTROY:
+            if (g_settings.borderlessGamma) {
+                KillTimer(window, kBorderlessGammaTimer);
+                borderless_gamma::Shutdown();
+            }
             raw_input::HandleDestroy();
             cursor_clip::Shutdown();
             g_window = nullptr;
@@ -130,9 +141,9 @@ void Configure(const Settings& settings) {
     g_settings = settings;
     logger::Log("INFO", "GameWindow",
                 "configured RawMouseInput=%d RestoreCursorClip=%d BorderlessFullscreen=%d "
-                "MouseScalingFix=%d",
+                "BorderlessGamma=%d MouseScalingFix=%d",
                 settings.rawMouseInput, settings.restoreCursorClip, settings.borderlessFullscreen,
-                settings.mouseScalingFix);
+                settings.borderlessGamma, settings.mouseScalingFix);
     if ((!settings.rawMouseInput && (settings.restoreCursorClip || settings.mouseScalingFix)) ||
         settings.borderlessFullscreen) {
         HANDLE thread = CreateThread(nullptr, 0, WindowDiscoveryThread, nullptr, 0, nullptr);
@@ -167,6 +178,10 @@ bool EnsureInstalled(HWND window) {
                         "could not start borderless verification timer: error=%lu",
                         GetLastError());
         }
+    }
+    if (g_settings.borderlessGamma && SetTimer(window, kBorderlessGammaTimer, 250, nullptr) == 0) {
+        logger::Log("WARN", "GameWindow", "could not start gamma timer: error=%lu",
+                    GetLastError());
     }
     cursor_clip::Initialize(g_settings.restoreCursorClip, window);
     if (g_settings.rawMouseInput) {
