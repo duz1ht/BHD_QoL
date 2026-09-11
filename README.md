@@ -64,6 +64,7 @@ RawMouseInput=1
 RestoreCursorClip=1
 MouseScalingFix=1
 UseCorrectAspectFOV=1
+RectangularSpinMapMask=0
 
 [Logging]
 Enabled=0
@@ -101,6 +102,13 @@ applies only when the current, target, and temporary camera FOV values are all
 exactly 80 degrees, preserving scopes, zoom, special cameras, transitions, and
 map-controlled FOV values. It defaults to `1`; set it to `0` to disable the
 client-only camera hook.
+
+`RectangularSpinMapMask=1` replaces the Spin Map renderer's 32-segment circular
+depth-mask geometry with two triangles spanning `HUDSPINMAPX1`, `HUDSPINMAPX2`,
+`HUDSPINMAPY1`, and `HUDSPINMAPY2`. It changes only the vertices and indices sent
+through the existing mask draw, retaining the game's viewport, depth-write mode,
+depth function, Z value, and subsequent Spin Map rendering. It defaults to `0`,
+which leaves the original circular-mask code and draw counts untouched.
 
 `DPIAware=1` requests System DPI awareness before the real DirectInput entry point
 is called and before the game creates its window. The DLL tries the modern context
