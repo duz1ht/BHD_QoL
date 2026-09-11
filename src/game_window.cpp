@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "cursor_clip.h"
+#include "cursor_visibility.h"
 #include "borderless_fullscreen.h"
 #include "borderless_gamma.h"
 #include "logger.h"
@@ -19,9 +20,26 @@ constexpr uintptr_t kGameWindow = 0x00F654FC;
 constexpr UINT kInitialFocusRecoveryMessage = WM_APP + 0x42;
 constexpr UINT_PTR kBorderlessVerificationTimer = 0xB4D;
 constexpr UINT_PTR kBorderlessGammaTimer = 0xB4E;
+constexpr UINT_PTR kForegroundVerificationTimer = 0xB4F;
 unsigned int g_borderlessVerificationTicks = 0;
+bool g_gameActive = false;
+bool g_foregroundStateKnown = false;
+
+bool IsGameForeground(HWND* foregroundResult = nullptr, HWND* rootResult = nullptr,
+                      DWORD* processResult = nullptr) {
+    const HWND foreground = GetForegroundWindow();
+    const HWND root = foreground == nullptr ? nullptr : GetAncestor(foreground, GA_ROOT);
+    DWORD process = 0;
+    if (foreground != nullptr) GetWindowThreadProcessId(foreground, &process);
+    if (foregroundResult != nullptr) *foregroundResult = foreground;
+    if (rootResult != nullptr) *rootResult = root;
+    if (processResult != nullptr) *processResult = process;
+    return foreground != nullptr && !IsIconic(g_window) &&
+           (root == g_window || process == GetCurrentProcessId());
+}
 
 void TryResume(const char* trigger) {
+    cursor_visibility::HandleGameActivated(trigger);
     const bool clipReady = cursor_clip::HandleFocusGained(trigger);
     if (g_settings.rawMouseInput && clipReady) {
         raw_input::HandleFocusGained(trigger, true);
@@ -35,11 +53,30 @@ void ResumeRawInputIfReady(const char* trigger) {
     }
 }
 
-void HandleFocusLost() {
-    if (g_settings.borderlessGamma) borderless_gamma::HandleFocusLost("focus_lost");
+void HandleFocusLost(const char* trigger) {
+    if (g_settings.borderlessGamma) borderless_gamma::HandleFocusLost(trigger);
     mouse_scaling_fix::Reset();
     if (g_settings.rawMouseInput) raw_input::HandleFocusLost();
     cursor_clip::HandleFocusLost();
+    cursor_visibility::HandleGameDeactivated(trigger);
+}
+
+void UpdateForegroundState(const char* trigger) {
+    HWND foreground = nullptr;
+    HWND root = nullptr;
+    DWORD process = 0;
+    const bool active = IsGameForeground(&foreground, &root, &process);
+    if (g_foregroundStateKnown && active == g_gameActive) return;
+    logger::Log("INFO", "GameWindow",
+                "trigger=%s foreground_transition=%s foreground=0x%08lX root=0x%08lX "
+                "process=%lu",
+                trigger, active ? "active" : "inactive",
+                reinterpret_cast<unsigned long>(foreground),
+                reinterpret_cast<unsigned long>(root), process);
+    g_gameActive = active;
+    g_foregroundStateKnown = true;
+    if (active) TryResume(trigger);
+    else HandleFocusLost(trigger);
 }
 
 void HandleInitialFocusRecovery(HWND window) {
@@ -72,18 +109,16 @@ LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM 
     const LRESULT result = CallWindowProcW(g_originalWndProc, window, message, wParam, lParam);
     switch (message) {
         case WM_ACTIVATEAPP:
-            if (wParam) TryResume("WM_ACTIVATEAPP");
-            else HandleFocusLost();
+            UpdateForegroundState("WM_ACTIVATEAPP");
             break;
         case WM_ACTIVATE:
-            if (LOWORD(wParam) == WA_INACTIVE) HandleFocusLost();
-            else TryResume("WM_ACTIVATE");
+            UpdateForegroundState("WM_ACTIVATE");
             break;
         case WM_SETFOCUS:
-            TryResume("WM_SETFOCUS");
+            UpdateForegroundState("WM_SETFOCUS");
             break;
         case WM_KILLFOCUS:
-            HandleFocusLost();
+            UpdateForegroundState("WM_KILLFOCUS");
             break;
         case WM_MOVE:
         case WM_DISPLAYCHANGE:
@@ -100,6 +135,8 @@ LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM 
             if (wParam != SIZE_MINIMIZED) ResumeRawInputIfReady("WM_SIZE");
             break;
         case WM_TIMER:
+            if (wParam == kForegroundVerificationTimer)
+                UpdateForegroundState("foreground_timer");
             if (wParam == kBorderlessGammaTimer) borderless_gamma::Poll(window);
             if (wParam == kBorderlessVerificationTimer) {
                 borderless_fullscreen::Apply(window, "verification_timer");
@@ -109,17 +146,23 @@ LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM 
             }
             break;
         case WM_DESTROY:
-            HandleFocusLost();
+            if (g_gameActive) {
+                g_gameActive = false;
+                HandleFocusLost("WM_DESTROY");
+            }
             break;
         case WM_NCDESTROY:
+            KillTimer(window, kForegroundVerificationTimer);
             if (g_settings.borderlessGamma) {
                 KillTimer(window, kBorderlessGammaTimer);
                 borderless_gamma::Shutdown();
             }
             raw_input::HandleDestroy();
             cursor_clip::Shutdown();
+            cursor_visibility::Shutdown();
             g_window = nullptr;
             g_originalWndProc = nullptr;
+            g_foregroundStateKnown = false;
             InterlockedExchange(&g_installing, 0);
             break;
     }
@@ -168,6 +211,8 @@ bool EnsureInstalled(HWND window) {
     }
     g_window = window;
     g_originalWndProc = reinterpret_cast<WNDPROC>(previous);
+    g_gameActive = false;
+    g_foregroundStateKnown = false;
     logger::Log("INFO", "GameWindow", "shared WndProc installed hwnd=0x%08lX",
                 reinterpret_cast<unsigned long>(window));
     borderless_fullscreen::Apply(window, "initialization");
@@ -183,6 +228,10 @@ bool EnsureInstalled(HWND window) {
         logger::Log("WARN", "GameWindow", "could not start gamma timer: error=%lu",
                     GetLastError());
     }
+    if (SetTimer(window, kForegroundVerificationTimer, 100, nullptr) == 0) {
+        logger::Log("WARN", "GameWindow",
+                    "could not start foreground verification timer: error=%lu", GetLastError());
+    }
     cursor_clip::Initialize(g_settings.restoreCursorClip, window);
     if (g_settings.rawMouseInput) {
         if (!raw_input::AttachWindow(window)) {
@@ -195,7 +244,7 @@ bool EnsureInstalled(HWND window) {
                         "could not post initial focus recovery: error=%lu", GetLastError());
         }
     }
-    TryResume("initialization");
+    UpdateForegroundState("initialization");
     InterlockedExchange(&g_installing, 0);
     return true;
 }

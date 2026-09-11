@@ -79,6 +79,12 @@ Input hook cannot validate the supported executable or complete registration, th
 retains its legacy mouse path while cursor restoration can continue independently. If
 `dinput8.ini` is missing, the DLL uses the same defaults shown above.
 
+The shared window hook also verifies the real foreground process independently of
+Alt+Tab messages. When the Start menu or another application takes foreground, it
+releases cursor confinement, suspends game input, and temporarily balances the game's
+hidden-cursor state so the Windows cursor remains visible. Only those compensating
+visibility changes are undone when the game becomes active again.
+
 `MouseScalingFix=1` replaces the scoped mouse fixed-point conversion with signed
 fractional accumulation for independent X and Y axes. This prevents tiny movement in
 one direction from being discarded while the opposite direction moves a whole unit.
