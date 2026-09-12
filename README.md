@@ -63,8 +63,6 @@ RawMouseInput=1
 RestoreCursorClip=1
 MouseScalingFix=1
 UseCorrectAspectFOV=1
-HUDScaling=1
-HUDScale=1.0
 
 [Logging]
 Enabled=0
@@ -102,17 +100,6 @@ applies only when the current, target, and temporary camera FOV values are all
 exactly 80 degrees, preserving scopes, zoom, special cameras, transitions, and
 map-controlled FOV values. It defaults to `1`; set it to `0` to disable the
 client-only camera hook.
-
-`HUDScaling=1` keeps `hudpos.def` as the authoritative 1024x768 layout and applies
-one uniform scale, `min(render width / 1024, render height / 768)`, only at coordinate
-conversion calls made by the HUD renderer. Coordinates near an edge remain anchored
-to that edge, while central coordinates remain relative to the screen center. This
-keeps HUD rectangles, the Spin Map, status graphics, waypoints, mission data, chat,
-system messages, glyph dimensions, and line spacing proportional without changing
-menus or other users of the game's coordinate conversion function. The scale is
-cached until the active render resolution changes. `HUDScale=1.0` uses the calculated
-size; other positive values multiply it. Set `HUDScaling=0` to retain the complete
-vanilla HUD path.
 
 `DPIAware=1` requests System DPI awareness before the real DirectInput entry point
 is called and before the game creates its window. The DLL tries the modern context

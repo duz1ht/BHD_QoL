@@ -5,7 +5,6 @@ add_library(dinput8 SHARED src/dinput8.cpp src/logger.cpp src/game_window.cpp
     src/cursor_clip.cpp src/cursor_visibility.cpp src/dpi_awareness.cpp
     src/borderless_fullscreen.cpp src/borderless_gamma.cpp
     src/raw_input.cpp src/mouse_scaling_fix.cpp src/camera_fov.cpp src/camera_fov_math.cpp
-    src/hud_scaling.cpp src/hud_scaling_math.cpp
     src/dinput8.def)
 target_compile_features(dinput8 PRIVATE cxx_std_17)
 
@@ -27,8 +26,4 @@ if(BUILD_TESTING)
     target_include_directories(camera_fov_math_test PRIVATE src)
     target_compile_features(camera_fov_math_test PRIVATE cxx_std_17)
     add_test(NAME camera_fov_math COMMAND camera_fov_math_test)
-    add_executable(hud_scaling_math_test tests/hud_scaling_math_test.cpp src/hud_scaling_math.cpp)
-    target_include_directories(hud_scaling_math_test PRIVATE src)
-    target_compile_features(hud_scaling_math_test PRIVATE cxx_std_17)
-    add_test(NAME hud_scaling_math COMMAND hud_scaling_math_test)
 endif()
