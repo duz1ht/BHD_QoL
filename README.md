@@ -111,8 +111,9 @@ their 1024x768 reference layout. The automatic factor is
 `EnableHUDTextScale=1` independently applies the automatic factor multiplied by
 `HUDTextScale` to confirmed HUD glyphs and chat/system-message line spacing. Set
 either enable option to `0` to retain the corresponding vanilla rendering path.
-Sprite source rectangles remain unchanged, and the Spin Map,
-magazine/clip, stance, weapon icon, health, and power destinations retain their
+Sprite source rectangles remain unchanged. The weapon icon and stance remain
+anchored to the lower-left corner, while magazine/clip remains anchored to the
+lower-right corner; the other confirmed graphics likewise retain their assigned
 edge anchors. The implementation redirects only the analyzed HUD call sites; it
 does not replace the shared coordinate converter or font renderer, and it does not
 alter the shared font descriptor, menus, console text, or unrelated UI calls.

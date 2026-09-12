@@ -56,12 +56,12 @@ constexpr TextCall kTextCalls[] = {
 constexpr uintptr_t kBottomRightQuadCalls[] = {
     0x0010A46B,
     0x0010A4E2,
-    0x0010A985,
 };
 
 constexpr uintptr_t kBottomLeftQuadCalls[] = {
     0x0010A819,
     0x0010A8C6,
+    0x0010A985,
 };
 
 constexpr uintptr_t kStatusConversionCalls[] = {

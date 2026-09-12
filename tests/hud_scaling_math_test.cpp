@@ -7,6 +7,10 @@ int main() {
     const float scale = CalculateScale(1920, 1080, 1.0f);
     assert(std::fabs(scale - 1.40625f) < 0.0001f);
     assert(ScalePosition(20, 1024, 1920, scale, HorizontalAnchor::Left) == 28);
+    // HUDWPNICON uses a left anchor. Treating its small X coordinate as a
+    // right-anchored margin would incorrectly move it toward the screen center.
+    assert(ScalePosition(64, 1024, 1920, scale, HorizontalAnchor::Left) == 90);
+    assert(ScalePosition(64, 1024, 1920, scale, HorizontalAnchor::Right) == 570);
     assert(ScalePosition(1004, 1024, 1920, scale, HorizontalAnchor::Right) == 1892);
     assert(ScalePosition(512, 1024, 1920, scale, HorizontalAnchor::Center) == 960);
     assert(ScaleExtent(32, scale) == 45);
