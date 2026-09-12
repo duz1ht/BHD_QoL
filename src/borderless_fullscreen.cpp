@@ -5,7 +5,6 @@
 #include <cstring>
 
 #include "logger.h"
-#include "d3d8_resolution_reset.h"
 
 namespace borderless_fullscreen {
 namespace {
@@ -314,10 +313,10 @@ bool Apply(HWND window, const char* trigger) {
     // the current render resolution and let D3D8 scale it to the resized borderless window.
     const bool configured = ConfigureGame(false);
     if (g_forceDesktopResolution && dimensionsChanged) {
-        logger::Log("INFO", "BorderlessFullscreen",
-                    "trigger=%s output_changed=%ldx%ld->%ldx%ld device_reset=requested",
+        logger::Log("WARN", "BorderlessFullscreen",
+                    "trigger=%s output_changed=%ldx%ld->%ldx%ld "
+                    "render_resolution_preserved=1 reason=runtime_reset_disabled",
                     trigger, previousWidth, previousHeight, monitorWidth, monitorHeight);
-        d3d8_resolution_reset::Request(monitorWidth, monitorHeight);
     }
     if (!configured) {
         InterlockedExchange(&g_applying, 0);

@@ -6,7 +6,6 @@
 #include "cursor_visibility.h"
 #include "borderless_fullscreen.h"
 #include "borderless_gamma.h"
-#include "d3d8_resolution_reset.h"
 #include "logger.h"
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
@@ -68,12 +67,10 @@ bool TryResume(const char* trigger) {
     if (g_settings.rawMouseInput && !raw_input::HandleFocusGained(trigger, true)) return false;
     cursor_visibility::HandleGameActivated(trigger);
     if (g_settings.borderlessGamma) borderless_gamma::HandleFocusGained(g_window, trigger);
-    d3d8_resolution_reset::SetGameActive(true);
     return true;
 }
 
 void HandleFocusLost(const char* trigger) {
-    d3d8_resolution_reset::SetGameActive(false);
     if (g_settings.borderlessGamma) borderless_gamma::HandleFocusLost(trigger);
     mouse_scaling_fix::Reset();
     if (g_settings.rawMouseInput) raw_input::HandleFocusLost();

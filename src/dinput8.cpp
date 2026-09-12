@@ -8,7 +8,6 @@
 #include "dpi_awareness.h"
 #include "borderless_fullscreen.h"
 #include "borderless_gamma.h"
-#include "d3d8_resolution_reset.h"
 #include "game_window.h"
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
@@ -306,8 +305,6 @@ void ApplyBhdPatches() {
     const bool borderlessInitialized =
         borderless_fullscreen::Initialize(config.borderlessFullscreen,
                                           config.forceDesktopResolution);
-    d3d8_resolution_reset::Initialize(config.borderlessFullscreen && borderlessInitialized &&
-                                      config.forceDesktopResolution);
     const bool gammaInitialized = borderless_gamma::Initialize(
         config.borderlessFullscreen && borderlessInitialized);
 
