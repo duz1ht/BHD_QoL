@@ -4,6 +4,7 @@ project(BHD_QoL_DInput8 LANGUAGES CXX)
 add_library(dinput8 SHARED src/dinput8.cpp src/logger.cpp src/game_window.cpp
     src/cursor_clip.cpp src/cursor_visibility.cpp src/dpi_awareness.cpp
     src/borderless_fullscreen.cpp src/borderless_gamma.cpp
+    src/d3d8_resolution_reset.cpp
     src/raw_input.cpp src/mouse_scaling_fix.cpp src/camera_fov.cpp src/camera_fov_math.cpp
     src/dinput8.def)
 target_compile_features(dinput8 PRIVATE cxx_std_17)

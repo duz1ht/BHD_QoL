@@ -139,10 +139,10 @@ desktop resolution is forced, the feature also patches the supported executable'
 resolution setup before device creation; an executable signature mismatch disables only
 this feature. Until the game publishes a positive internal resolution, diagnostics show
 `render_resolution=unknown` rather than treating the startup `0x0` value as final.
-If the desktop dimensions change while the game is running, borderless output follows the
-new monitor rectangle but the live internal resolution is preserved. This avoids invoking
-the game's partial D3D8 creation path during Alt+Tab; the existing backbuffer is scaled to
-the new output size until the game performs its own complete video-mode transition.
+If the desktop dimensions change while the game is running, the D3D8 hook queues the latest
+size while the game is inactive. After focus returns and rendering has resumed, it invokes
+the game's complete video-mode transition from `Present`, rebuilding the device and its
+resources without running device creation from a window-message callback.
 
 Logging is disabled by default. Set `Logging.Enabled=1` to create a new automatically named
 `BHD_QoL_<date>_<time>_<pid>.log` beside `dfbhd.exe` for every session. Every line
