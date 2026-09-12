@@ -105,12 +105,14 @@ exactly 80 degrees, preserving scopes, zoom, special cameras, transitions, and
 map-controlled FOV values. It defaults to `1`; set it to `0` to disable the
 client-only camera hook.
 
-`EnableHUDScaling=1` uniformly scales the confirmed graphical HUD rendering paths from
-their 1024x768 reference layout. The automatic factor is
-`min(render width / 1024, render height / 768)`, multiplied by `HUDScale`.
-`EnableHUDTextScale=1` independently applies the automatic factor multiplied by
-`HUDTextScale` to confirmed HUD glyphs and chat/system-message line spacing. Set
-either enable option to `0` to retain the corresponding vanilla rendering path.
+`EnableHUDScaling=1` applies `HUDScale` to the confirmed graphical HUD rendering
+paths in their 1024x768 reference coordinate space, before the game's original
+resolution conversion. `HUDScale=1.0` therefore preserves vanilla positions and
+sizes; lower or higher values resize elements around their assigned anchors.
+`EnableHUDTextScale=1` independently applies `HUDTextScale` to confirmed HUD glyphs
+and chat/system-message line spacing. `HUDTextScale=1.0` preserves their vanilla
+size and spacing. Set either enable option to `0` to avoid hooking the corresponding
+rendering path.
 Sprite source rectangles remain unchanged. The weapon icon and stance remain
 anchored to the lower-left corner, while magazine/clip remains anchored to the
 lower-right corner; the other confirmed graphics likewise retain their assigned

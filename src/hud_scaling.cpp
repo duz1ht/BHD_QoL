@@ -2,7 +2,6 @@
 
 #include <windows.h>
 
-#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -76,43 +75,21 @@ constexpr uintptr_t kStatusConversionCalls[] = {
 uintptr_t g_base = 0;
 float g_graphicsMultiplier = 1.0f;
 float g_textMultiplier = 1.0f;
-LONG g_cachedWidth = -1;
-LONG g_cachedHeight = -1;
-float g_baseScale = 1.0f;
 QuadFn g_quad = nullptr;
 SpinMapFn g_spinMap = nullptr;
 ConvertFn g_convert = nullptr;
 
-float BaseScale() {
-    const auto* resolution = reinterpret_cast<const volatile LONG*>(g_base + kResolutionRva);
-    const LONG width = resolution[0];
-    const LONG height = resolution[1];
-    if (width != g_cachedWidth || height != g_cachedHeight) {
-        g_cachedWidth = width;
-        g_cachedHeight = height;
-        g_baseScale = CalculateScale(width, height, 1.0f);
-        logger::Log("INFO", "HUDScaling", "render_resolution=%ldx%ld base_scale=%.4f",
-                    width, height, static_cast<double>(g_baseScale));
-    }
-    return g_baseScale;
-}
-
-int32_t ToReference(int32_t output, int32_t referenceExtent, int32_t outputExtent) {
-    if (outputExtent <= 0) return output;
-    return static_cast<int32_t>(std::lround(static_cast<double>(output) * referenceExtent /
-                                            outputExtent));
-}
-
 void TransformRect(int32_t* x, int32_t* y, int32_t* width, int32_t* height,
                    HorizontalAnchor horizontal, VerticalAnchor vertical) {
-    if (g_cachedWidth <= 0 || g_cachedHeight <= 0) BaseScale();
-    const float scale = BaseScale() * g_graphicsMultiplier;
-    const int32_t outputX = ScalePosition(*x, kReferenceWidth, g_cachedWidth, scale, horizontal);
-    const int32_t outputY = ScalePosition(*y, kReferenceHeight, g_cachedHeight, scale, vertical);
-    *x = ToReference(outputX, kReferenceWidth, g_cachedWidth);
-    *y = ToReference(outputY, kReferenceHeight, g_cachedHeight);
-    *width = ToReference(ScaleExtent(*width, scale), kReferenceWidth, g_cachedWidth);
-    *height = ToReference(ScaleExtent(*height, scale), kReferenceHeight, g_cachedHeight);
+    // Transform in the game's 1024x768 coordinate space. The original renderer
+    // performs its normal resolution conversion afterwards, so multiplier 1.0
+    // is exactly the vanilla path rather than an additional automatic scale.
+    *x = ScalePosition(*x, kReferenceWidth, kReferenceWidth,
+                       g_graphicsMultiplier, horizontal);
+    *y = ScalePosition(*y, kReferenceHeight, kReferenceHeight,
+                       g_graphicsMultiplier, vertical);
+    *width = ScaleExtent(*width, g_graphicsMultiplier);
+    *height = ScaleExtent(*height, g_graphicsMultiplier);
 }
 
 void DrawQuad(int32_t x, int32_t y, int32_t sourceWidth, int32_t sourceHeight,
@@ -151,9 +128,8 @@ void __cdecl DrawHudText(const void* descriptor, int32_t x, int32_t y, const cha
     }
     if (wrapperRva == 0 || descriptor == nullptr) return;
     FontDescriptor copy = *static_cast<const FontDescriptor*>(descriptor);
-    const float multiplier = BaseScale() * g_textMultiplier;
-    copy.scaleX *= multiplier;
-    copy.scaleY *= multiplier;
+    copy.scaleX *= g_textMultiplier;
+    copy.scaleY *= g_textMultiplier;
     reinterpret_cast<TextFn>(g_base + wrapperRva)(&copy, x, y, text, color, flags);
 }
 
@@ -164,26 +140,24 @@ void __cdecl ConvertStatus(const int32_t* resolution, int32_t* x, int32_t* y) {
     const uintptr_t returnRva = reinterpret_cast<uintptr_t>(__builtin_return_address(0)) - g_base;
 #endif
     const bool extent = returnRva == 0x0010A05D || returnRva == 0x0010A27A;
-    const float scale = BaseScale() * g_graphicsMultiplier;
     if (extent) {
-        *x = ToReference(ScaleExtent(*x, scale), kReferenceWidth, g_cachedWidth);
-        *y = ToReference(ScaleExtent(*y, scale), kReferenceHeight, g_cachedHeight);
+        *x = ScaleExtent(*x, g_graphicsMultiplier);
+        *y = ScaleExtent(*y, g_graphicsMultiplier);
     } else {
-        const int32_t ox = ScalePosition(*x, kReferenceWidth, g_cachedWidth, scale,
-                                         HorizontalAnchor::Left);
-        const int32_t oy = ScalePosition(*y, kReferenceHeight, g_cachedHeight, scale,
-                                         VerticalAnchor::Bottom);
-        *x = ToReference(ox, kReferenceWidth, g_cachedWidth);
-        *y = ToReference(oy, kReferenceHeight, g_cachedHeight);
+        *x = ScalePosition(*x, kReferenceWidth, kReferenceWidth,
+                           g_graphicsMultiplier, HorizontalAnchor::Left);
+        *y = ScalePosition(*y, kReferenceHeight, kReferenceHeight,
+                           g_graphicsMultiplier, VerticalAnchor::Bottom);
     }
     g_convert(resolution, x, y);
 }
 
 int32_t __cdecl TextSpacingReferenceWidth() {
     // The original routine derives both chat and system-message spacing as
-    // width * 12 / 1280. Supplying a virtual width applies the same uniform
-    // multiplier used for glyphs without changing the active resolution.
-    return ScaleExtent(1280, BaseScale() * g_textMultiplier);
+    // width * 12 / 1280. Returning the real width at multiplier 1.0 preserves
+    // vanilla spacing; other values apply the same multiplier used for glyphs.
+    const auto* resolution = reinterpret_cast<const volatile LONG*>(g_base + kResolutionRva);
+    return ScaleExtent(resolution[0], g_textMultiplier);
 }
 
 bool RedirectCall(uintptr_t callRva, const void* target) {
