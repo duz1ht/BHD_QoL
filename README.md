@@ -63,6 +63,9 @@ RawMouseInput=1
 RestoreCursorClip=1
 MouseScalingFix=1
 UseCorrectAspectFOV=1
+HUDScaling=1
+HUDScale=1.0
+HUDTextScale=1.0
 
 [Logging]
 Enabled=0
@@ -100,6 +103,21 @@ applies only when the current, target, and temporary camera FOV values are all
 exactly 80 degrees, preserving scopes, zoom, special cameras, transitions, and
 map-controlled FOV values. It defaults to `1`; set it to `0` to disable the
 client-only camera hook.
+
+`HUDScaling=1` uniformly scales the confirmed in-game HUD rendering paths from
+their 1024x768 reference layout. The automatic factor is
+`min(render width / 1024, render height / 768)`: graphics then use `HUDScale`,
+while confirmed HUD glyphs and chat/system-message line spacing independently use
+`HUDTextScale`. Sprite source rectangles remain unchanged, and the Spin Map,
+magazine/clip, stance, weapon icon, health, and power destinations retain their
+edge anchors. The implementation redirects only the analyzed HUD call sites; it
+does not replace the shared coordinate converter or font renderer, and it does not
+alter the shared font descriptor, menus, console text, or unrelated UI calls.
+
+The HUD hooks resolve analyzed virtual addresses relative to the executable module
+base. At the user's request, this feature does not hash the executable or validate
+code signatures before installing its selective hooks; use it only with the
+analyzed 32-bit build.
 
 `DPIAware=1` requests System DPI awareness before the real DirectInput entry point
 is called and before the game creates its window. The DLL tries the modern context
