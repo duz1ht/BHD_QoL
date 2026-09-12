@@ -53,6 +53,26 @@ constexpr TextCall kTextCalls[] = {
     {0x0010AD9C, 0x000F6D50}, {0x0010AE27, 0x000F6D50},
 };
 
+constexpr uintptr_t kBottomRightQuadCalls[] = {
+    0x0010A46B,
+    0x0010A4E2,
+    0x0010A985,
+};
+
+constexpr uintptr_t kBottomLeftQuadCalls[] = {
+    0x0010A819,
+    0x0010A8C6,
+};
+
+constexpr uintptr_t kStatusConversionCalls[] = {
+    0x0010A046,
+    0x0010A058,
+    0x0010A139,
+    0x0010A263,
+    0x0010A275,
+    0x0010A2F4,
+};
+
 uintptr_t g_base = 0;
 float g_graphicsMultiplier = 1.0f;
 float g_textMultiplier = 1.0f;
@@ -198,12 +218,11 @@ bool Install(bool enabled, float graphicsMultiplier, float textMultiplier) {
     g_convert = reinterpret_cast<ConvertFn>(g_base + kConvertRva);
 
     bool ok = RedirectCall(0x0010266C, reinterpret_cast<const void*>(&DrawSpinMap));
-    for (uintptr_t rva : {0x0010A46Bu, 0x0010A4E2u, 0x0010A985u})
+    for (const uintptr_t rva : kBottomRightQuadCalls)
         ok = RedirectCall(rva, reinterpret_cast<const void*>(&DrawBottomRight)) && ok;
-    for (uintptr_t rva : {0x0010A819u, 0x0010A8C6u})
+    for (const uintptr_t rva : kBottomLeftQuadCalls)
         ok = RedirectCall(rva, reinterpret_cast<const void*>(&DrawBottomLeft)) && ok;
-    for (uintptr_t rva : {0x0010A046u, 0x0010A058u, 0x0010A139u,
-                          0x0010A263u, 0x0010A275u, 0x0010A2F4u})
+    for (const uintptr_t rva : kStatusConversionCalls)
         ok = RedirectCall(rva, reinterpret_cast<const void*>(&ConvertStatus)) && ok;
     for (const auto& call : kTextCalls)
         ok = RedirectCall(call.callRva, reinterpret_cast<const void*>(&DrawHudText)) && ok;
