@@ -37,8 +37,9 @@ struct PatchConfig {
     bool restoreCursorClip = true;
     bool mouseScalingFix = true;
     bool useCorrectAspectFov = true;
-    bool hudScaling = true;
+    bool enableHudScaling = true;
     float hudScale = 1.0f;
+    bool enableHudTextScale = true;
     float hudTextScale = 1.0f;
     bool dpiAware = true;
     bool borderlessFullscreen = false;
@@ -270,8 +271,11 @@ PatchConfig LoadPatchConfig() {
     config.mouseScalingFix = BoolFromIni(iniPath, L"MouseScalingFix", config.mouseScalingFix);
     config.useCorrectAspectFov =
         BoolFromIni(iniPath, L"UseCorrectAspectFOV", config.useCorrectAspectFov);
-    config.hudScaling = BoolFromIni(iniPath, L"HUDScaling", config.hudScaling);
+    config.enableHudScaling =
+        BoolFromIni(iniPath, L"EnableHUDScaling", config.enableHudScaling);
     config.hudScale = FloatFromIni(iniPath, L"HUDScale", config.hudScale);
+    config.enableHudTextScale =
+        BoolFromIni(iniPath, L"EnableHUDTextScale", config.enableHudTextScale);
     config.hudTextScale = FloatFromIni(iniPath, L"HUDTextScale", config.hudTextScale);
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
     config.borderlessFullscreen =
@@ -295,13 +299,14 @@ void ApplyBhdPatches() {
     logger::Log("INFO", "Config",
                 "NVGResolution=%d DynamicResolution=%d ClipCursorFix=%d RawMouseInput=%d "
                 "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
-                "HUDScaling=%d HUDScale=%.3f HUDTextScale=%.3f "
+                "EnableHUDScaling=%d HUDScale=%.3f EnableHUDTextScale=%d HUDTextScale=%.3f "
                 "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.nvgResolution, config.dynamicResolution, config.clipCursorFix,
                 config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
-                config.useCorrectAspectFov, config.hudScaling,
-                static_cast<double>(config.hudScale), static_cast<double>(config.hudTextScale),
+                config.useCorrectAspectFov, config.enableHudScaling,
+                static_cast<double>(config.hudScale), config.enableHudTextScale,
+                static_cast<double>(config.hudTextScale),
                 config.dpiAware,
                 config.borderlessFullscreen, config.forceDesktopResolution,
                 config.rawInputStatisticsIntervalMs);
@@ -311,7 +316,8 @@ void ApplyBhdPatches() {
     }
     // HUD hooks use module-relative RVAs and intentionally do not participate in
     // the legacy fixed-base/version gate below.
-    hud_scaling::Install(config.hudScaling, config.hudScale, config.hudTextScale);
+    hud_scaling::Install(config.enableHudScaling, config.hudScale,
+                         config.enableHudTextScale, config.hudTextScale);
     const uintptr_t imageBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     if (imageBase != kImageBase) {
         logger::Log("ERROR", "Executable", "unsupported image base: expected=0x%08lX actual=0x%08lX",

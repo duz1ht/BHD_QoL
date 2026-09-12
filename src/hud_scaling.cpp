@@ -204,9 +204,10 @@ bool RedirectCall(uintptr_t callRva, const void* target) {
 }
 }  // namespace
 
-bool Install(bool enabled, float graphicsMultiplier, float textMultiplier) {
-    if (!enabled) {
-        logger::Log("INFO", "HUDScaling", "feature disabled");
+bool Install(bool graphicsEnabled, float graphicsMultiplier,
+             bool textEnabled, float textMultiplier) {
+    if (!graphicsEnabled && !textEnabled) {
+        logger::Log("INFO", "HUDScaling", "graphics and text scaling disabled");
         return false;
     }
     static_assert(sizeof(void*) == 4, "HUDScaling requires a 32-bit build");
@@ -217,20 +218,28 @@ bool Install(bool enabled, float graphicsMultiplier, float textMultiplier) {
     g_spinMap = reinterpret_cast<SpinMapFn>(g_base + kSpinMapRva);
     g_convert = reinterpret_cast<ConvertFn>(g_base + kConvertRva);
 
-    bool ok = RedirectCall(0x0010266C, reinterpret_cast<const void*>(&DrawSpinMap));
-    for (const uintptr_t rva : kBottomRightQuadCalls)
-        ok = RedirectCall(rva, reinterpret_cast<const void*>(&DrawBottomRight)) && ok;
-    for (const uintptr_t rva : kBottomLeftQuadCalls)
-        ok = RedirectCall(rva, reinterpret_cast<const void*>(&DrawBottomLeft)) && ok;
-    for (const uintptr_t rva : kStatusConversionCalls)
-        ok = RedirectCall(rva, reinterpret_cast<const void*>(&ConvertStatus)) && ok;
-    for (const auto& call : kTextCalls)
-        ok = RedirectCall(call.callRva, reinterpret_cast<const void*>(&DrawHudText)) && ok;
-    ok = RedirectCall(0x0010ACE6, reinterpret_cast<const void*>(&TextSpacingReferenceWidth)) && ok;
+    bool ok = true;
+    if (graphicsEnabled) {
+        ok = RedirectCall(0x0010266C, reinterpret_cast<const void*>(&DrawSpinMap)) && ok;
+        for (const uintptr_t rva : kBottomRightQuadCalls)
+            ok = RedirectCall(rva, reinterpret_cast<const void*>(&DrawBottomRight)) && ok;
+        for (const uintptr_t rva : kBottomLeftQuadCalls)
+            ok = RedirectCall(rva, reinterpret_cast<const void*>(&DrawBottomLeft)) && ok;
+        for (const uintptr_t rva : kStatusConversionCalls)
+            ok = RedirectCall(rva, reinterpret_cast<const void*>(&ConvertStatus)) && ok;
+    }
+    if (textEnabled) {
+        for (const auto& call : kTextCalls)
+            ok = RedirectCall(call.callRva, reinterpret_cast<const void*>(&DrawHudText)) && ok;
+        ok = RedirectCall(0x0010ACE6,
+                          reinterpret_cast<const void*>(&TextSpacingReferenceWidth)) && ok;
+    }
 
     logger::Log(ok ? "INFO" : "ERROR", "HUDScaling",
-                "selective hooks %s graphics_multiplier=%.3f text_multiplier=%.3f",
-                ok ? "installed" : "incomplete", static_cast<double>(graphicsMultiplier),
+                "selective hooks %s graphics_enabled=%d graphics_multiplier=%.3f "
+                "text_enabled=%d text_multiplier=%.3f",
+                ok ? "installed" : "incomplete", graphicsEnabled,
+                static_cast<double>(graphicsMultiplier), textEnabled,
                 static_cast<double>(textMultiplier));
     return ok;
 }

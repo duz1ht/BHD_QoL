@@ -63,8 +63,9 @@ RawMouseInput=1
 RestoreCursorClip=1
 MouseScalingFix=1
 UseCorrectAspectFOV=1
-HUDScaling=1
+EnableHUDScaling=1
 HUDScale=1.0
+EnableHUDTextScale=1
 HUDTextScale=1.0
 
 [Logging]
@@ -104,11 +105,13 @@ exactly 80 degrees, preserving scopes, zoom, special cameras, transitions, and
 map-controlled FOV values. It defaults to `1`; set it to `0` to disable the
 client-only camera hook.
 
-`HUDScaling=1` uniformly scales the confirmed in-game HUD rendering paths from
+`EnableHUDScaling=1` uniformly scales the confirmed graphical HUD rendering paths from
 their 1024x768 reference layout. The automatic factor is
-`min(render width / 1024, render height / 768)`: graphics then use `HUDScale`,
-while confirmed HUD glyphs and chat/system-message line spacing independently use
-`HUDTextScale`. Sprite source rectangles remain unchanged, and the Spin Map,
+`min(render width / 1024, render height / 768)`, multiplied by `HUDScale`.
+`EnableHUDTextScale=1` independently applies the automatic factor multiplied by
+`HUDTextScale` to confirmed HUD glyphs and chat/system-message line spacing. Set
+either enable option to `0` to retain the corresponding vanilla rendering path.
+Sprite source rectangles remain unchanged, and the Spin Map,
 magazine/clip, stance, weapon icon, health, and power destinations retain their
 edge anchors. The implementation redirects only the analyzed HUD call sites; it
 does not replace the shared coordinate converter or font renderer, and it does not
