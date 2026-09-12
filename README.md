@@ -139,6 +139,9 @@ desktop resolution is forced, the feature also patches the supported executable'
 resolution setup before device creation; an executable signature mismatch disables only
 this feature. Until the game publishes a positive internal resolution, diagnostics show
 `render_resolution=unknown` rather than treating the startup `0x0` value as final.
+When the monitor dimensions change at runtime, the window hook defers the game's normal
+D3D8 video-mode recreation until after `WM_DISPLAYCHANGE` has returned. This rebuilds the
+backbuffer, viewport, and device-dependent resources at the newly forced desktop resolution.
 
 Logging is disabled by default. Set `Logging.Enabled=1` to create a new automatically named
 `BHD_QoL_<date>_<time>_<pid>.log` beside `dfbhd.exe` for every session. Every line

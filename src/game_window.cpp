@@ -18,6 +18,7 @@ WNDPROC g_originalWndProc = nullptr;
 volatile LONG g_installing = 0;
 constexpr uintptr_t kGameWindow = 0x00F654FC;
 constexpr UINT kInitialFocusRecoveryMessage = WM_APP + 0x42;
+constexpr UINT kBorderlessResolutionChangeMessage = WM_APP + 0x43;
 constexpr UINT_PTR kBorderlessVerificationTimer = 0xB4D;
 constexpr UINT_PTR kBorderlessGammaTimer = 0xB4E;
 constexpr UINT_PTR kForegroundVerificationTimer = 0xB4F;
@@ -141,6 +142,11 @@ LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM 
         HandleInitialFocusRecovery(window);
         return 0;
     }
+    if (message == kBorderlessResolutionChangeMessage) {
+        borderless_fullscreen::ProcessPendingResolutionChange(window,
+                                                               "resolution_change_message");
+        return 0;
+    }
     const LRESULT result = CallWindowProcW(g_originalWndProc, window, message, wParam, lParam);
     switch (message) {
         case WM_ACTIVATEAPP:
@@ -159,6 +165,11 @@ LRESULT CALLBACK SharedWndProc(HWND window, UINT message, WPARAM wParam, LPARAM 
         case WM_DISPLAYCHANGE:
             borderless_fullscreen::Apply(window,
                 message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
+            if (message == WM_DISPLAYCHANGE &&
+                !PostMessageW(window, kBorderlessResolutionChangeMessage, 0, 0)) {
+                logger::Log("ERROR", "BorderlessFullscreen",
+                            "could not defer device reset: error=%lu", GetLastError());
+            }
             cursor_clip::HandleWindowChanged(message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
             UpdateForegroundState(message == WM_MOVE ? "WM_MOVE" : "WM_DISPLAYCHANGE");
             if (message == WM_DISPLAYCHANGE && g_settings.borderlessGamma &&

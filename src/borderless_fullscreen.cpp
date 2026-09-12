@@ -18,17 +18,23 @@ constexpr uintptr_t kWindowedArgumentHandler = 0x00469122;
 constexpr uintptr_t kWindowedRenderRead = 0x0046AA17;
 constexpr uintptr_t kResolutionOverride = 0x0046AAA9;
 constexpr uintptr_t kResolutionOverrideReturn = 0x0046AAAE;
+constexpr uintptr_t kSetVideoMode = 0x0046AA10;
+constexpr uintptr_t kSelectedVideoMode = 0x00A3421C;
 const unsigned char kExpectedWindowedReference[] = {0xA1, 0xC8, 0x41, 0xA3, 0x00};
 const unsigned char kExpectedWindowedArgumentHandler[] = {
     0x89, 0x3D, 0x7C, 0xD4, 0x95, 0x00, 0x89, 0x3D, 0xF0, 0x46, 0xA3, 0x00};
 const unsigned char kExpectedWindowedRenderRead[] = {0x8B, 0x1D, 0x7C, 0xD4, 0x95, 0x00};
 const unsigned char kExpectedResolutionOverride[] = {0xA1, 0x80, 0xD4, 0x95, 0x00};
+const unsigned char kExpectedSetVideoMode[] = {
+    0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x28, 0x53,
+};
 
 bool g_enabled = false;
 bool g_forceDesktopResolution = false;
 volatile LONG g_applying = 0;
 volatile LONG g_monitorWidth = 0;
 volatile LONG g_monitorHeight = 0;
+volatile LONG g_resolutionChangePending = 0;
 RECT g_monitorRect = {};
 HMONITOR g_monitor = nullptr;
 void* g_resolutionCodeCave = nullptr;
@@ -68,8 +74,10 @@ bool ValidateExecutable(bool validateResolutionOverride) {
                     kExpectedWindowedRenderRead, sizeof(kExpectedWindowedRenderRead)) == 0;
     return windowedValid &&
            (!validateResolutionOverride ||
-            std::memcmp(reinterpret_cast<const void*>(kResolutionOverride),
-                        kExpectedResolutionOverride, sizeof(kExpectedResolutionOverride)) == 0);
+            (std::memcmp(reinterpret_cast<const void*>(kResolutionOverride),
+                         kExpectedResolutionOverride, sizeof(kExpectedResolutionOverride)) == 0 &&
+             std::memcmp(reinterpret_cast<const void*>(kSetVideoMode),
+                         kExpectedSetVideoMode, sizeof(kExpectedSetVideoMode)) == 0));
 }
 
 bool WriteCode(uintptr_t address, const void* bytes, size_t size) {
@@ -296,11 +304,22 @@ bool Apply(HWND window, const char* trigger) {
                     "trigger=%s monitor bounds unavailable: error=%lu", trigger, GetLastError());
         return false;
     }
-    g_monitorRect = monitorRect;
     const LONG monitorWidth = monitorRect.right - monitorRect.left;
     const LONG monitorHeight = monitorRect.bottom - monitorRect.top;
+    const LONG previousWidth = InterlockedCompareExchange(&g_monitorWidth, 0, 0);
+    const LONG previousHeight = InterlockedCompareExchange(&g_monitorHeight, 0, 0);
+    const bool dimensionsChanged = previousWidth > 0 && previousHeight > 0 &&
+                                   (monitorWidth != previousWidth ||
+                                    monitorHeight != previousHeight);
+    g_monitorRect = monitorRect;
     InterlockedExchange(&g_monitorWidth, monitorWidth);
     InterlockedExchange(&g_monitorHeight, monitorHeight);
+    if (g_forceDesktopResolution && dimensionsChanged) {
+        InterlockedExchange(&g_resolutionChangePending, 1);
+        logger::Log("INFO", "BorderlessFullscreen",
+                    "trigger=%s device_reset=pending old_output=%ldx%ld new_output=%ldx%ld",
+                    trigger, previousWidth, previousHeight, monitorWidth, monitorHeight);
+    }
     const bool configured = ConfigureGame();
     if (!configured) {
         InterlockedExchange(&g_applying, 0);
@@ -353,6 +372,31 @@ bool Apply(HWND window, const char* trigger) {
                 g_monitorRect.bottom, positioned, positionError);
     if (positioned) LogActiveState(window, trigger);
     return positioned != FALSE;
+}
+
+bool ProcessPendingResolutionChange(HWND window, const char* trigger) {
+    if (!g_enabled || !g_forceDesktopResolution) return true;
+    if (InterlockedCompareExchange(&g_resolutionChangePending, 0, 1) != 1) return true;
+    if (window == nullptr || !IsWindow(window) || IsIconic(window)) {
+        InterlockedExchange(&g_resolutionChangePending, 1);
+        return false;
+    }
+
+    // SetVideoMode is the game's normal D3D8 teardown/recreation path. Calling
+    // it rather than IDirect3DDevice8::Reset directly also rebuilds all of the
+    // game's default-pool resources and viewport state. The installed code cave
+    // substitutes the current monitor dimensions when this routine selects its
+    // back-buffer size.
+    using SetVideoMode = int (__cdecl*)(int);
+    const int selectedMode = *reinterpret_cast<volatile int*>(kSelectedVideoMode);
+    const int result = reinterpret_cast<SetVideoMode>(kSetVideoMode)(selectedMode);
+    const LONG width = InterlockedCompareExchange(&g_monitorWidth, 0, 0);
+    const LONG height = InterlockedCompareExchange(&g_monitorHeight, 0, 0);
+    logger::Log(result ? "INFO" : "ERROR", "BorderlessFullscreen",
+                "trigger=%s device_reset=%s selected_mode=%d requested_backbuffer=%ldx%ld",
+                trigger, result ? "completed" : "failed", selectedMode, width, height);
+    if (!result) InterlockedExchange(&g_resolutionChangePending, 1);
+    return result != 0;
 }
 
 bool GetOutputSize(LONG* width, LONG* height) {
