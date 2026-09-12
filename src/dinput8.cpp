@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cwchar>
 
 #include "logger.h"
 #include "dpi_awareness.h"
@@ -12,6 +13,7 @@
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
 #include "camera_fov.h"
+#include "hud_scaling.h"
 
 namespace {
 constexpr uintptr_t kImageBase = 0x400000;
@@ -35,6 +37,8 @@ struct PatchConfig {
     bool restoreCursorClip = true;
     bool mouseScalingFix = true;
     bool useCorrectAspectFov = true;
+    bool hudScaling = true;
+    float hudScale = 1.0f;
     bool dpiAware = true;
     bool borderlessFullscreen = false;
     bool forceDesktopResolution = false;
@@ -228,6 +232,18 @@ bool BoolFromIni(const wchar_t* path, const wchar_t* key, bool defaultValue) {
     return GetPrivateProfileIntW(L"PatchGroups", key, defaultValue ? 1 : 0, path) != 0;
 }
 
+float FloatFromIni(const wchar_t* path, const wchar_t* key, float defaultValue) {
+    wchar_t fallback[32] = {};
+    wchar_t value[32] = {};
+    std::swprintf(fallback, 32, L"%.3f", static_cast<double>(defaultValue));
+    GetPrivateProfileStringW(L"PatchGroups", key, fallback, value, 32, path);
+    wchar_t* end = nullptr;
+    const double parsed = std::wcstod(value, &end);
+    return end != value && *end == L'\0' && parsed > 0.0 && parsed <= 10.0
+               ? static_cast<float>(parsed)
+               : defaultValue;
+}
+
 void BuildIniPath(wchar_t* iniPath, DWORD size) {
     iniPath[0] = L'\0';
     const DWORD length = GetModuleFileNameW(nullptr, iniPath, size);
@@ -254,6 +270,8 @@ PatchConfig LoadPatchConfig() {
     config.mouseScalingFix = BoolFromIni(iniPath, L"MouseScalingFix", config.mouseScalingFix);
     config.useCorrectAspectFov =
         BoolFromIni(iniPath, L"UseCorrectAspectFOV", config.useCorrectAspectFov);
+    config.hudScaling = BoolFromIni(iniPath, L"HUDScaling", config.hudScaling);
+    config.hudScale = FloatFromIni(iniPath, L"HUDScale", config.hudScale);
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
     config.borderlessFullscreen =
         BoolFromIni(iniPath, L"BorderlessFullscreen", config.borderlessFullscreen);
@@ -276,11 +294,13 @@ void ApplyBhdPatches() {
     logger::Log("INFO", "Config",
                 "NVGResolution=%d DynamicResolution=%d ClipCursorFix=%d RawMouseInput=%d "
                 "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
+                "HUDScaling=%d HUDScale=%.3f "
                 "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.nvgResolution, config.dynamicResolution, config.clipCursorFix,
                 config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
-                config.useCorrectAspectFov, config.dpiAware,
+                config.useCorrectAspectFov, config.hudScaling,
+                static_cast<double>(config.hudScale), config.dpiAware,
                 config.borderlessFullscreen, config.forceDesktopResolution,
                 config.rawInputStatisticsIntervalMs);
     if (config.invalidStatisticsInterval) {
@@ -297,6 +317,7 @@ void ApplyBhdPatches() {
                 static_cast<unsigned long>(imageBase));
     mouse_scaling_fix::Install(config.mouseScalingFix);
     camera_fov::Install(config.useCorrectAspectFov);
+    hud_scaling::Install(config.hudScaling, config.hudScale);
     dpi_awareness::Initialize(config.dpiAware);
     if (config.borderlessFullscreen && !config.dpiAware) {
         logger::Log("WARN", "BorderlessFullscreen",
