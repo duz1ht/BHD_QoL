@@ -1,7 +1,5 @@
 #include "d3d8_resolution_reset.h"
 
-#include <d3d8.h>
-
 #include <cstdint>
 #include <cstring>
 
@@ -16,11 +14,13 @@ const unsigned char kExpectedTransition[] = {
     0xE8, 0xAB, 0x0D, 0xFF, 0xFF, 0xA1, 0x1C, 0x42, 0xA3, 0x00,
 };
 
-using Direct3DCreate8Function = IDirect3D8* (WINAPI*)(UINT);
-using CreateDeviceFunction = HRESULT (STDMETHODCALLTYPE*)(IDirect3D8*, UINT, D3DDEVTYPE,
-    HWND, DWORD, D3DPRESENT_PARAMETERS*, IDirect3DDevice8**);
-using PresentFunction = HRESULT (STDMETHODCALLTYPE*)(IDirect3DDevice8*, const RECT*,
-    const RECT*, HWND, const RGNDATA*);
+// The proxy only forwards opaque COM interface and presentation-parameter pointers. Keeping
+// these signatures ABI-only avoids requiring the legacy DirectX 8 SDK's d3d8.h header.
+using Direct3DCreate8Function = void* (WINAPI*)(UINT);
+using CreateDeviceFunction = HRESULT (STDMETHODCALLTYPE*)(void*, UINT, DWORD,
+    HWND, DWORD, void*, void**);
+using PresentFunction = HRESULT (STDMETHODCALLTYPE*)(void*, const RECT*,
+    const RECT*, HWND, const void*);
 
 Direct3DCreate8Function g_originalDirect3DCreate8 = nullptr;
 CreateDeviceFunction g_originalCreateDevice = nullptr;
@@ -45,9 +45,9 @@ bool PatchPointer(void** slot, void* replacement, void** original) {
     return restored != FALSE;
 }
 
-HRESULT STDMETHODCALLTYPE HookPresent(IDirect3DDevice8* device, const RECT* source,
+HRESULT STDMETHODCALLTYPE HookPresent(void* device, const RECT* source,
                                       const RECT* destination, HWND overrideWindow,
-                                      const RGNDATA* dirtyRegion) {
+                                      const void* dirtyRegion) {
     if (InterlockedCompareExchange(&g_active, 0, 0) != 0) {
         InterlockedIncrement(&g_activeFrames);
     } else {
@@ -82,12 +82,12 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDirect3DDevice8* device, const RECT* sour
         InterlockedExchange(&g_transitioning, 0);
         // The native transition may have released this device. Never Present through
         // the stale interface from the frame that performed the recreation.
-        return D3D_OK;
+        return S_OK;
     }
     return g_originalPresent(device, source, destination, overrideWindow, dirtyRegion);
 }
 
-void HookDevice(IDirect3DDevice8* device) {
+void HookDevice(void* device) {
     if (device == nullptr) return;
     void** vtable = *reinterpret_cast<void***>(device);
     if (!PatchPointer(&vtable[15], reinterpret_cast<void*>(&HookPresent),
@@ -96,17 +96,16 @@ void HookDevice(IDirect3DDevice8* device) {
     }
 }
 
-HRESULT STDMETHODCALLTYPE HookCreateDevice(IDirect3D8* direct3d, UINT adapter,
-    D3DDEVTYPE type, HWND focusWindow, DWORD behavior, D3DPRESENT_PARAMETERS* parameters,
-    IDirect3DDevice8** device) {
+HRESULT STDMETHODCALLTYPE HookCreateDevice(void* direct3d, UINT adapter,
+    DWORD type, HWND focusWindow, DWORD behavior, void* parameters, void** device) {
     const HRESULT result = g_originalCreateDevice(direct3d, adapter, type, focusWindow,
                                                    behavior, parameters, device);
     if (SUCCEEDED(result) && device != nullptr) HookDevice(*device);
     return result;
 }
 
-IDirect3D8* WINAPI HookDirect3DCreate8(UINT sdkVersion) {
-    IDirect3D8* direct3d = g_originalDirect3DCreate8(sdkVersion);
+void* WINAPI HookDirect3DCreate8(UINT sdkVersion) {
+    void* direct3d = g_originalDirect3DCreate8(sdkVersion);
     if (direct3d == nullptr) return nullptr;
     void** vtable = *reinterpret_cast<void***>(direct3d);
     if (!PatchPointer(&vtable[15], reinterpret_cast<void*>(&HookCreateDevice),

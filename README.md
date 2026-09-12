@@ -143,6 +143,8 @@ If the desktop dimensions change while the game is running, the D3D8 hook queues
 size while the game is inactive. After focus returns and rendering has resumed, it invokes
 the game's complete video-mode transition from `Present`, rebuilding the device and its
 resources without running device creation from a window-message callback.
+The hook uses ABI-compatible opaque COM pointers and therefore does not require the legacy
+DirectX 8 SDK headers to build.
 
 Logging is disabled by default. Set `Logging.Enabled=1` to create a new automatically named
 `BHD_QoL_<date>_<time>_<pid>.log` beside `dfbhd.exe` for every session. Every line
