@@ -36,8 +36,8 @@ struct PatchConfig {
     bool mouseScalingFix = true;
     bool useCorrectAspectFov = true;
     bool dpiAware = true;
-    bool borderlessFullscreen = false;
-    bool forceDesktopResolution = false;
+    bool borderlessFullscreen = true;
+    bool forceDesktopResolution = true;
     bool loggingEnabled = false;
     unsigned long rawInputStatisticsIntervalMs = 5000;
     bool invalidStatisticsInterval = false;
