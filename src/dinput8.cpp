@@ -15,9 +15,6 @@
 
 namespace {
 constexpr uintptr_t kImageBase = 0x400000;
-constexpr uintptr_t kPatchAddressMovEax = 0x52A934;
-constexpr uintptr_t kPatchAddressWidthStore = 0x52A94C;
-constexpr uintptr_t kPatchAddressHeightStore = 0x52A956;
 constexpr uintptr_t kPatchAddressLoadingGameDynamicResolution = 0x4BC711;
 constexpr uintptr_t kPatchAddressInitializeInGameSystemsClipCursor = 0x4623D2;
 constexpr uintptr_t kPatchAddressClipCursorToViewPort = 0x4628D3;
@@ -28,7 +25,6 @@ constexpr uintptr_t kClipCursorCodeCave = 0x5E492B;
 HMODULE g_realDInput8 = nullptr;
 volatile LONG g_initialized = 0;
 struct PatchConfig {
-    bool nvgResolution = true;
     bool adaptiveScreenCenter = true;
     bool clipCursorFix = true;
     bool rawMouseInput = true;
@@ -36,8 +32,8 @@ struct PatchConfig {
     bool mouseScalingFix = true;
     bool useCorrectAspectFov = true;
     bool dpiAware = true;
-    bool borderlessFullscreen = false;
-    bool forceDesktopResolution = false;
+    bool borderlessFullscreen = true;
+    bool forceDesktopResolution = true;
     bool loggingEnabled = false;
     unsigned long rawInputStatisticsIntervalMs = 5000;
     bool invalidStatisticsInterval = false;
@@ -58,13 +54,6 @@ struct Patch {
 };
 
 #define BYTE_SPAN(name) ByteSpan{name, sizeof(name)}
-
-const unsigned char kNvgWidthImmediateExpected[] = {0xB8, 0x00, 0x02, 0x00, 0x00};
-const unsigned char kNvgWidthImmediateReplacement[] = {0xB8, 0x00, 0x08, 0x00, 0x00};
-const unsigned char kNvgStoredWidthExpected[] = {0xC7, 0x05, 0x8C, 0x49, 0xE0, 0x00, 0x00, 0x02, 0x00, 0x00};
-const unsigned char kNvgStoredWidthReplacement[] = {0xC7, 0x05, 0x8C, 0x49, 0xE0, 0x00, 0x00, 0x08, 0x00, 0x00};
-const unsigned char kNvgStoredHeightExpected[] = {0xC7, 0x05, 0x90, 0x49, 0xE0, 0x00, 0x00, 0x01, 0x00, 0x00};
-const unsigned char kNvgStoredHeightReplacement[] = {0xC7, 0x05, 0x90, 0x49, 0xE0, 0x00, 0x00, 0x04, 0x00, 0x00};
 
 const unsigned char kDynamicResolutionCodeCaveBytes[] = {
     0x89, 0x1D, 0xD8, 0xB3, 0x9F, 0x00, 0x8B, 0x1D, 0xC0, 0x72, 0x9F, 0x00,
@@ -93,15 +82,6 @@ const unsigned char kInitialClipCursorExpected[] = {0xC7, 0x45, 0xF8, 0x7F, 0x02
 const unsigned char kInitialClipCursorReplacement[] = {0xE9, 0x3B, 0x25, 0x18, 0x00, 0x90, 0x90};
 const unsigned char kClipCursorExpected[] = {0xC7, 0x45, 0xF8, 0x7F, 0x02, 0x00, 0x00};
 const unsigned char kClipCursorReplacement[] = {0xE9, 0x53, 0x20, 0x18, 0x00, 0x90, 0x90};
-
-const Patch kNvgPatches[] = {
-    {"Increase NVG viewport width immediate", "SetupNVGViewPort(): MOV EAX,0x200 -> MOV EAX,0x800",
-     kPatchAddressMovEax, BYTE_SPAN(kNvgWidthImmediateExpected), BYTE_SPAN(kNvgWidthImmediateReplacement), false},
-    {"Increase NVG viewport stored width", "SetupNVGViewPort(): MOV [00E0498C],0x200 -> MOV [00E0498C],0x800",
-     kPatchAddressWidthStore, BYTE_SPAN(kNvgStoredWidthExpected), BYTE_SPAN(kNvgStoredWidthReplacement), false},
-    {"Increase NVG viewport stored height", "SetupNVGViewPort(): MOV [00E04990],0x100 -> MOV [00E04990],0x400",
-     kPatchAddressHeightStore, BYTE_SPAN(kNvgStoredHeightExpected), BYTE_SPAN(kNvgStoredHeightReplacement), false},
-};
 
 const Patch kDynamicResolutionCodeCavePatch = {
     "Install dynamic resolution code cave",
@@ -245,7 +225,6 @@ PatchConfig LoadPatchConfig() {
     BuildIniPath(iniPath, MAX_PATH);
 
     PatchConfig config = {};
-    config.nvgResolution = BoolFromIni(iniPath, L"NVGResolution", config.nvgResolution);
     config.adaptiveScreenCenter =
         BoolFromIni(iniPath, L"AdaptiveScreenCenter", config.adaptiveScreenCenter);
     config.clipCursorFix = BoolFromIni(iniPath, L"ClipCursorFix", config.clipCursorFix);
@@ -275,12 +254,12 @@ void ApplyBhdPatches() {
     const PatchConfig config = LoadPatchConfig();
     logger::Initialize(config.loggingEnabled);
     logger::Log("INFO", "Config",
-                "NVGResolution=%d AdaptiveScreenCenter=%d ClipCursorFix=%d RawMouseInput=%d "
+                "AdaptiveScreenCenter=%d ClipCursorFix=%d RawMouseInput=%d "
                 "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
                 "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
-                config.nvgResolution, config.adaptiveScreenCenter, config.clipCursorFix,
-                config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
+                config.adaptiveScreenCenter, config.clipCursorFix, config.rawMouseInput,
+                config.restoreCursorClip, config.mouseScalingFix,
                 config.useCorrectAspectFov, config.dpiAware,
                 config.borderlessFullscreen, config.forceDesktopResolution,
                 config.rawInputStatisticsIntervalMs);
@@ -308,13 +287,6 @@ void ApplyBhdPatches() {
                                           config.forceDesktopResolution);
     const bool gammaInitialized = borderless_gamma::Initialize(
         config.borderlessFullscreen && borderlessInitialized);
-
-    if (config.nvgResolution) {
-        logger::Log("INFO", "NVGResolution", "feature enabled");
-        ApplyPatchGroup(kNvgPatches);
-    } else {
-        logger::Log("INFO", "NVGResolution", "feature disabled");
-    }
 
     if (config.adaptiveScreenCenter) {
         logger::Log("INFO", "AdaptiveScreenCenter", "feature enabled");
