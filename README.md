@@ -75,7 +75,3 @@ The resulting DLL must be named `dinput8.dll`.
 ## Compatibility
 
 Before applying each modification, the DLL verifies the expected bytes in the executable. If the `dfbhd.exe` version is incompatible, the affected modification is not applied. Set `Logging.Enabled=1` to check the results.
-
-## For LLM agents
-
-`Knowledge_Base/` is a read-only reference area. Do not modify any file or directory inside it.
