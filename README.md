@@ -27,7 +27,7 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | --- | :---: | --- |
 | `BorderlessFullscreen` | `1` | Runs the game in a borderless window that covers the entire monitor. |
 | `ForceDesktopResolution` | `1` | With `BorderlessFullscreen=1`, uses the monitor resolution as the internal render resolution. At `0`, the resolution selected in the game is stretched to fill the screen. Has no effect when borderless mode is disabled. |
-| `UseCorrectAspectFOV` | `1` | Corrects the field of view for aspect ratios other than 4:3 without changing zoom, scopes, or special cameras. |
+| `UseCorrectAspectFOV` | `1` | Corrects the field of view for internal render resolutions wider than 4:3 without changing zoom, scopes, or special cameras. |
 | `DPIAware` | `1` | Prevents Windows DPI scaling from distorting window, monitor, and cursor coordinates. Recommended for borderless mode. |
 | `RawMouseInput` | `1` | Uses Windows Raw Input for more reliable relative mouse input while preserving the game's sensitivity, inversion, and bindings. |
 | `MouseScalingFix` | `1` | Fixes rounding of small mouse movements, especially noticeable when using scoped weapons. |
