@@ -34,7 +34,6 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | `AdaptiveScreenCenter` | `1` | Calculates the screen center from the current resolution instead of using fixed values. |
 | `ClipCursorFix` | `1` | Uses the current resolution when confining the cursor instead of fixed 640x480 bounds. |
 | `RestoreCursorClip` | `1` | Restores cursor confinement after Alt+Tab, focus, resolution, display, or window changes. Works independently of `RawMouseInput`. |
-| `NVGResolution` | `1` | Increases the night-vision render resolution from 512x256 to 2048x1024. |
 
 ### `[Logging]`
 
@@ -56,7 +55,6 @@ MouseScalingFix=1
 AdaptiveScreenCenter=1
 ClipCursorFix=1
 RestoreCursorClip=1
-NVGResolution=1
 
 [Logging]
 Enabled=0
