@@ -53,16 +53,16 @@ Copy `dinput8.ini` next to `dfbhd.exe` and the compiled `dinput8.dll` to enable 
 
 ```ini
 [PatchGroups]
-DPIAware=1
 BorderlessFullscreen=0
 ForceDesktopResolution=0
-NVGResolution=1
-DynamicResolution=1
-ClipCursorFix=1
-RawMouseInput=1
-RestoreCursorClip=1
-MouseScalingFix=1
 UseCorrectAspectFOV=1
+DPIAware=1
+RawMouseInput=1
+MouseScalingFix=1
+AdaptiveScreenCenter=1
+ClipCursorFix=1
+RestoreCursorClip=1
+NVGResolution=1
 
 [Logging]
 Enabled=0

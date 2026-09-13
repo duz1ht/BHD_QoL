@@ -29,7 +29,7 @@ HMODULE g_realDInput8 = nullptr;
 volatile LONG g_initialized = 0;
 struct PatchConfig {
     bool nvgResolution = true;
-    bool dynamicResolution = true;
+    bool adaptiveScreenCenter = true;
     bool clipCursorFix = true;
     bool rawMouseInput = true;
     bool restoreCursorClip = true;
@@ -246,7 +246,8 @@ PatchConfig LoadPatchConfig() {
 
     PatchConfig config = {};
     config.nvgResolution = BoolFromIni(iniPath, L"NVGResolution", config.nvgResolution);
-    config.dynamicResolution = BoolFromIni(iniPath, L"DynamicResolution", config.dynamicResolution);
+    config.adaptiveScreenCenter =
+        BoolFromIni(iniPath, L"AdaptiveScreenCenter", config.adaptiveScreenCenter);
     config.clipCursorFix = BoolFromIni(iniPath, L"ClipCursorFix", config.clipCursorFix);
     config.rawMouseInput = BoolFromIni(iniPath, L"RawMouseInput", config.rawMouseInput);
     config.restoreCursorClip =
@@ -274,11 +275,11 @@ void ApplyBhdPatches() {
     const PatchConfig config = LoadPatchConfig();
     logger::Initialize(config.loggingEnabled);
     logger::Log("INFO", "Config",
-                "NVGResolution=%d DynamicResolution=%d ClipCursorFix=%d RawMouseInput=%d "
+                "NVGResolution=%d AdaptiveScreenCenter=%d ClipCursorFix=%d RawMouseInput=%d "
                 "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
                 "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
-                config.nvgResolution, config.dynamicResolution, config.clipCursorFix,
+                config.nvgResolution, config.adaptiveScreenCenter, config.clipCursorFix,
                 config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
                 config.useCorrectAspectFov, config.dpiAware,
                 config.borderlessFullscreen, config.forceDesktopResolution,
@@ -315,13 +316,13 @@ void ApplyBhdPatches() {
         logger::Log("INFO", "NVGResolution", "feature disabled");
     }
 
-    if (config.dynamicResolution) {
-        logger::Log("INFO", "DynamicResolution", "feature enabled");
+    if (config.adaptiveScreenCenter) {
+        logger::Log("INFO", "AdaptiveScreenCenter", "feature enabled");
         if (ApplyPatch(kDynamicResolutionCodeCavePatch)) {
             ApplyPatch(kDynamicResolutionCorePatch);
         }
     } else {
-        logger::Log("INFO", "DynamicResolution", "feature disabled");
+        logger::Log("INFO", "AdaptiveScreenCenter", "feature disabled");
     }
     if (config.clipCursorFix) {
         logger::Log("INFO", "ClipCursorFix", "feature enabled");
