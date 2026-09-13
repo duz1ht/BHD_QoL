@@ -1,49 +1,49 @@
 # BHD QoL
 
-Proxy `dinput8.dll` com melhorias para **Delta Force: Black Hawk Down** (`dfbhd.exe`). A DLL carrega o DirectInput original do Windows e aplica apenas as opções ativadas no `dinput8.ini`.
+A `dinput8.dll` proxy with quality-of-life improvements for **Delta Force: Black Hawk Down** (`dfbhd.exe`). The DLL loads the original Windows DirectInput library and applies only the options enabled in `dinput8.ini`.
 
-## Como usar
+## Installation
 
-1. Copie `dinput8.dll` para a mesma pasta de `dfbhd.exe`.
-2. Copie também `dinput8.ini` para essa pasta caso queira alterar as opções.
-3. Abra o jogo normalmente.
+1. Copy `dinput8.dll` to the same directory as `dfbhd.exe`.
+2. Copy `dinput8.ini` to that directory if you want to change the settings.
+3. Launch the game normally.
 
-Exemplo:
+Example:
 
 ```text
-Pasta do jogo/
+Game directory/
 ├── dfbhd.exe
 ├── dinput8.dll
 └── dinput8.ini
 ```
 
-O arquivo INI é opcional. Sem ele, a DLL usa os valores padrão indicados abaixo. Use `1` para ativar e `0` para desativar cada opção.
+The INI file is optional. If it is missing, the DLL uses the default values shown below. Use `1` to enable an option and `0` to disable it.
 
-## Opções do `dinput8.ini`
+## `dinput8.ini` options
 
 ### `[PatchGroups]`
 
-| Opção | Padrão | O que faz |
+| Option | Default | Description |
 | --- | :---: | --- |
-| `BorderlessFullscreen` | `0` | Executa o jogo em modo janela sem bordas, ocupando todo o monitor. |
-| `ForceDesktopResolution` | `0` | Com `BorderlessFullscreen=1`, usa a resolução do monitor como resolução interna. Em `0`, mantém a resolução escolhida no jogo e a estica para preencher a tela. Não tem efeito sem o modo sem bordas. |
-| `UseCorrectAspectFOV` | `1` | Corrige o campo de visão em proporções diferentes de 4:3 sem alterar zoom, miras ou câmeras especiais. |
-| `DPIAware` | `1` | Evita que a escala de DPI do Windows distorça coordenadas da janela, do monitor e do cursor. Recomendado para o modo sem bordas. |
-| `RawMouseInput` | `1` | Usa o Raw Input do Windows para leitura relativa e mais confiável do mouse, preservando sensibilidade, inversão e binds do jogo. |
-| `MouseScalingFix` | `1` | Corrige o arredondamento de movimentos pequenos do mouse, especialmente perceptível em miras de precisão. |
-| `AdaptiveScreenCenter` | `1` | Calcula o centro da tela de acordo com a resolução atual, em vez de usar valores fixos. |
-| `ClipCursorFix` | `1` | Usa a resolução atual ao limitar o cursor à janela, em vez dos limites fixos de 640×480. |
-| `RestoreCursorClip` | `1` | Restaura a prisão do cursor na janela após Alt+Tab, mudança de foco, resolução ou monitor. Funciona independentemente de `RawMouseInput`. |
-| `NVGResolution` | `1` | Aumenta a resolução da visão noturna de 512×256 para 2048×1024. |
+| `BorderlessFullscreen` | `0` | Runs the game in a borderless window that covers the entire monitor. |
+| `ForceDesktopResolution` | `0` | With `BorderlessFullscreen=1`, uses the monitor resolution as the internal render resolution. At `0`, the resolution selected in the game is stretched to fill the screen. Has no effect when borderless mode is disabled. |
+| `UseCorrectAspectFOV` | `1` | Corrects the field of view for aspect ratios other than 4:3 without changing zoom, scopes, or special cameras. |
+| `DPIAware` | `1` | Prevents Windows DPI scaling from distorting window, monitor, and cursor coordinates. Recommended for borderless mode. |
+| `RawMouseInput` | `1` | Uses Windows Raw Input for more reliable relative mouse input while preserving the game's sensitivity, inversion, and bindings. |
+| `MouseScalingFix` | `1` | Fixes rounding of small mouse movements, especially noticeable when using scoped weapons. |
+| `AdaptiveScreenCenter` | `1` | Calculates the screen center from the current resolution instead of using fixed values. |
+| `ClipCursorFix` | `1` | Uses the current resolution when confining the cursor instead of fixed 640x480 bounds. |
+| `RestoreCursorClip` | `1` | Restores cursor confinement after Alt+Tab, focus, resolution, display, or window changes. Works independently of `RawMouseInput`. |
+| `NVGResolution` | `1` | Increases the night-vision render resolution from 512x256 to 2048x1024. |
 
 ### `[Logging]`
 
-| Opção | Padrão | O que faz |
+| Option | Default | Description |
 | --- | :---: | --- |
-| `Enabled` | `0` | Cria, a cada execução, um arquivo `BHD_QoL_<data>_<hora>_<pid>.log` ao lado de `dfbhd.exe`. Ative para diagnosticar falhas ou recursos que não foram aplicados. |
-| `RawInputStatisticsIntervalMs` | `5000` | Define, em milissegundos, o intervalo dos diagnósticos de Raw Input e confinamento do cursor no log. Aceita de `1000` a `60000` e não altera a latência do mouse. |
+| `Enabled` | `0` | Creates a new `BHD_QoL_<date>_<time>_<pid>.log` beside `dfbhd.exe` for each session. Enable it to diagnose failures or features that were not applied. |
+| `RawInputStatisticsIntervalMs` | `5000` | Sets the interval, in milliseconds, for Raw Input and cursor-confinement diagnostics in the log. Accepts values from `1000` to `60000` and does not affect mouse latency. |
 
-Configuração padrão completa:
+Complete default configuration:
 
 ```ini
 [PatchGroups]
@@ -63,21 +63,21 @@ Enabled=0
 RawInputStatisticsIntervalMs=5000
 ```
 
-## Compilação
+## Building
 
-É necessário gerar uma DLL Windows de 32 bits. Com MinGW:
+The project must be built as a 32-bit Windows DLL. With MinGW:
 
 ```sh
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=mingw32-toolchain.cmake
 cmake --build build
 ```
 
-O resultado deve ser uma DLL chamada `dinput8.dll`.
+The resulting DLL must be named `dinput8.dll`.
 
-## Compatibilidade
+## Compatibility
 
-Antes de aplicar cada alteração, a DLL confere os bytes esperados do executável. Em uma versão incompatível de `dfbhd.exe`, a alteração afetada não é aplicada. Ative `Logging.Enabled=1` para conferir o resultado.
+Before applying each modification, the DLL verifies the expected bytes in the executable. If the `dfbhd.exe` version is incompatible, the affected modification is not applied. Set `Logging.Enabled=1` to check the results.
 
-## Para agentes LLM
+## For LLM agents
 
-`Knowledge_Base/` é uma área de referência somente para leitura. Nenhum arquivo ou diretório dentro dela deve ser alterado.
+`Knowledge_Base/` is a read-only reference area. Do not modify any file or directory inside it.
