@@ -2,6 +2,6 @@
 
 namespace camera_fov {
 
-bool Install(bool enabled);
+bool Install(bool fovEnabled, bool highFrequencyVisualCameraEnabled);
 
 } // namespace camera_fov

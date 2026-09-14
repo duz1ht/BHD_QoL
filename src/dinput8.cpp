@@ -32,6 +32,7 @@ struct PatchConfig {
     bool restoreCursorClip = true;
     bool mouseScalingFix = true;
     bool useCorrectAspectFov = true;
+    bool highFrequencyVisualCamera = false;
     bool dpiAware = true;
     bool borderlessFullscreen = true;
     bool forceDesktopResolution = true;
@@ -239,6 +240,8 @@ PatchConfig LoadPatchConfig() {
     config.mouseScalingFix = BoolFromIni(iniPath, L"MouseScalingFix", config.mouseScalingFix);
     config.useCorrectAspectFov =
         BoolFromIni(iniPath, L"UseCorrectAspectFOV", config.useCorrectAspectFov);
+    config.highFrequencyVisualCamera = BoolFromIni(
+        iniPath, L"HighFrequencyVisualCamera", config.highFrequencyVisualCamera);
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
     config.borderlessFullscreen =
         BoolFromIni(iniPath, L"BorderlessFullscreen", config.borderlessFullscreen);
@@ -270,12 +273,12 @@ void ApplyBhdPatches() {
     logger::Initialize(config.loggingEnabled);
     logger::Log("INFO", "Config",
                 "AdaptiveScreenCenter=%d ScaleCursorClipToResolution=%d RawMouseInput=%d "
-                "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
+                "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d HighFrequencyVisualCamera=%d "
                 "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
                 "FramePacingDiagnostics=%d RenderFrameLimit=%u RawInputStatisticsIntervalMs=%lu",
                 config.adaptiveScreenCenter, config.scaleCursorClipToResolution,
                 config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
-                config.useCorrectAspectFov, config.dpiAware,
+                config.useCorrectAspectFov, config.highFrequencyVisualCamera, config.dpiAware,
                 config.borderlessFullscreen, config.forceDesktopResolution,
                 config.framePacingDiagnostics, config.renderFrameLimit,
                 config.rawInputStatisticsIntervalMs);
@@ -298,7 +301,7 @@ void ApplyBhdPatches() {
         {config.framePacingDiagnostics && config.loggingEnabled,
          config.rawInputStatisticsIntervalMs, config.renderFrameLimit});
     mouse_scaling_fix::Install(config.mouseScalingFix);
-    camera_fov::Install(config.useCorrectAspectFov);
+    camera_fov::Install(config.useCorrectAspectFov, config.highFrequencyVisualCamera);
     dpi_awareness::Initialize(config.dpiAware);
     if (config.borderlessFullscreen && !config.dpiAware) {
         logger::Log("WARN", "BorderlessFullscreen",

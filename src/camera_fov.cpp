@@ -8,6 +8,7 @@
 #include <limits>
 
 #include "camera_fov_math.h"
+#include "visual_camera_math.h"
 #if defined(_MSC_VER)
 #include <intrin.h>
 #pragma intrinsic(_ReturnAddress)
@@ -27,6 +28,13 @@ constexpr uintptr_t kRenderWidthRva = 0x005F72C0;
 constexpr uintptr_t kRenderHeightRva = 0x005F72C4;
 constexpr size_t kCameraFovOffset = 0x3C;
 constexpr size_t kHookLength = 9;
+constexpr size_t kCameraSourceSize = 0x40;
+constexpr size_t kPositionOffsets[] = {0x04, 0x08, 0x0C};
+constexpr size_t kAngleOffsets[] = {0x10, 0x14, 0x18};
+constexpr LONG64 kDefaultUpdatePeriodUs = 16000;
+constexpr LONG64 kMinimumUpdatePeriodUs = 8000;
+constexpr LONG64 kMaximumUpdatePeriodUs = 33000;
+constexpr int32_t kTeleportDistance = 64 * 65536;
 
 const unsigned char kBuildCameraSignature[kHookLength] = {
     0x55,                         // push ebp
@@ -39,6 +47,14 @@ using BuildCameraFn = void(__cdecl *)(void *, void *);
 BuildCameraFn g_originalBuildCamera = nullptr;
 uintptr_t g_moduleBase = 0;
 bool g_installed = false;
+bool g_fovEnabled = false;
+bool g_highFrequencyVisualCameraEnabled = false;
+LARGE_INTEGER g_counterFrequency = {};
+unsigned char g_previousCameraSource[kCameraSourceSize] = {};
+unsigned char g_currentCameraSource[kCameraSourceSize] = {};
+bool g_haveCameraSource = false;
+LONG64 g_sourceChangeTick = 0;
+LONG64 g_interpolationDurationTicks = 0;
 LONG g_cachedWidth = -1;
 LONG g_cachedHeight = -1;
 int32_t g_cachedFirstPersonFov = kVanillaFovQ16;
@@ -65,6 +81,94 @@ int32_t GetCorrectedFov() {
     return g_cachedFirstPersonFov;
 }
 
+LONG64 CounterNow() {
+    LARGE_INTEGER value = {};
+    QueryPerformanceCounter(&value);
+    return value.QuadPart;
+}
+
+LONG64 MicrosecondsToTicks(LONG64 microseconds) {
+    return g_counterFrequency.QuadPart * microseconds / 1000000;
+}
+
+template <typename T>
+T ReadField(const unsigned char* source, size_t offset) {
+    T value = {};
+    memcpy(&value, source + offset, sizeof(value));
+    return value;
+}
+
+template <typename T>
+void WriteField(unsigned char* destination, size_t offset, T value) {
+    memcpy(destination + offset, &value, sizeof(value));
+}
+
+bool MotionChanged(const unsigned char* source) {
+    for (size_t offset : kPositionOffsets) {
+        if (ReadField<int32_t>(source, offset) !=
+            ReadField<int32_t>(g_currentCameraSource, offset)) return true;
+    }
+    for (size_t offset : kAngleOffsets) {
+        if (ReadField<uint32_t>(source, offset) !=
+            ReadField<uint32_t>(g_currentCameraSource, offset)) return true;
+    }
+    return false;
+}
+
+bool IsTeleport(const unsigned char* from, const unsigned char* to) {
+    for (size_t offset : kPositionOffsets) {
+        const int64_t delta = static_cast<int64_t>(ReadField<int32_t>(to, offset)) -
+                              ReadField<int32_t>(from, offset);
+        if (delta > kTeleportDistance || delta < -kTeleportDistance) return true;
+    }
+    return false;
+}
+
+void BuildInterpolatedCameraSource(unsigned char* output, const void* sourceCamera) {
+    const auto* source = static_cast<const unsigned char*>(sourceCamera);
+    const LONG64 now = CounterNow();
+    if (!g_haveCameraSource) {
+        memcpy(g_previousCameraSource, source, kCameraSourceSize);
+        memcpy(g_currentCameraSource, source, kCameraSourceSize);
+        g_haveCameraSource = true;
+        g_sourceChangeTick = now;
+        g_interpolationDurationTicks = MicrosecondsToTicks(kDefaultUpdatePeriodUs);
+    } else if (MotionChanged(source)) {
+        const LONG64 observedPeriod = now - g_sourceChangeTick;
+        const LONG64 minimumPeriod = MicrosecondsToTicks(kMinimumUpdatePeriodUs);
+        const LONG64 maximumPeriod = MicrosecondsToTicks(kMaximumUpdatePeriodUs);
+        memcpy(g_previousCameraSource, g_currentCameraSource, kCameraSourceSize);
+        memcpy(g_currentCameraSource, source, kCameraSourceSize);
+        g_sourceChangeTick = now;
+        g_interpolationDurationTicks = observedPeriod >= minimumPeriod && observedPeriod <= maximumPeriod
+            ? observedPeriod : MicrosecondsToTicks(kDefaultUpdatePeriodUs);
+        // A sub-8 ms change is already render-frequency motion; a gap is a
+        // state transition rather than a regular authoritative update.
+        if (observedPeriod < minimumPeriod || observedPeriod > maximumPeriod ||
+            IsTeleport(g_previousCameraSource, g_currentCameraSource)) {
+            memcpy(g_previousCameraSource, g_currentCameraSource, kCameraSourceSize);
+        }
+    } else {
+        // Keep non-motion fields (viewport and FOV included) current even when
+        // the authoritative transform did not change.
+        memcpy(g_currentCameraSource, source, kCameraSourceSize);
+    }
+
+    memcpy(output, g_currentCameraSource, kCameraSourceSize);
+    const uint32_t alpha = visual_camera::InterpolationAlpha(
+        now - g_sourceChangeTick, g_interpolationDurationTicks);
+    for (size_t offset : kPositionOffsets) {
+        WriteField<int32_t>(output, offset, visual_camera::InterpolateLinear(
+            ReadField<int32_t>(g_previousCameraSource, offset),
+            ReadField<int32_t>(g_currentCameraSource, offset), alpha));
+    }
+    for (size_t offset : kAngleOffsets) {
+        WriteField<uint32_t>(output, offset, visual_camera::InterpolateAngle(
+            ReadField<uint32_t>(g_previousCameraSource, offset),
+            ReadField<uint32_t>(g_currentCameraSource, offset), alpha));
+    }
+}
+
 bool WriteRelativeJump(unsigned char *output, const void *target) {
     const intptr_t displacement =
         reinterpret_cast<intptr_t>(target) - reinterpret_cast<intptr_t>(output + 5);
@@ -86,6 +190,14 @@ void __cdecl HookBuildCamera(void *destinationCamera, void *sourceCamera) {
     const uintptr_t caller =
         reinterpret_cast<uintptr_t>(__builtin_return_address(0));
 #endif
+    const bool mainFirstPersonCamera =
+        caller == g_moduleBase + kMainRendererReturnRva && sourceCamera != nullptr &&
+        *reinterpret_cast<const volatile int32_t*>(g_moduleBase + kCameraModeRva) == 0;
+    unsigned char interpolatedSource[kCameraSourceSize] = {};
+    if (g_highFrequencyVisualCameraEnabled && mainFirstPersonCamera) {
+        BuildInterpolatedCameraSource(interpolatedSource, sourceCamera);
+        sourceCamera = interpolatedSource;
+    }
     int32_t *cameraFov = sourceCamera == nullptr
                              ? nullptr
                              : reinterpret_cast<int32_t *>(
@@ -98,8 +210,7 @@ void __cdecl HookBuildCamera(void *destinationCamera, void *sourceCamera) {
         reinterpret_cast<const volatile int32_t *>(g_moduleBase + kCameraModeRva);
 
     const bool overrideFov =
-        caller == g_moduleBase + kMainRendererReturnRva && cameraFov != nullptr &&
-        *cameraMode == 0 &&
+        g_fovEnabled && mainFirstPersonCamera && cameraFov != nullptr && *cameraMode == 0 &&
         *currentFov == kVanillaFovQ16 && *targetFov == kVanillaFovQ16 &&
         *cameraFov == kVanillaFovQ16;
     const int32_t originalFov = overrideFov ? *cameraFov : 0;
@@ -151,9 +262,11 @@ bool InstallHook(unsigned char *hook) {
 }
 } // namespace
 
-bool Install(bool enabled) {
-    if (!enabled) {
-        logger::Log("INFO", "UseCorrectAspectFOV", "feature disabled");
+bool Install(bool fovEnabled, bool highFrequencyVisualCameraEnabled) {
+    g_fovEnabled = fovEnabled;
+    g_highFrequencyVisualCameraEnabled = highFrequencyVisualCameraEnabled;
+    if (!fovEnabled && !highFrequencyVisualCameraEnabled) {
+        logger::Log("INFO", "Camera", "FOV correction and visual interpolation disabled");
         return false;
     }
     if (g_installed) {
@@ -162,6 +275,10 @@ bool Install(bool enabled) {
     }
 
     static_assert(sizeof(void *) == 4, "UseCorrectAspectFOV requires a 32-bit build");
+    if (highFrequencyVisualCameraEnabled && !QueryPerformanceFrequency(&g_counterFrequency)) {
+        logger::Log("ERROR", "HighFrequencyVisualCamera", "QueryPerformanceFrequency failed");
+        return false;
+    }
     g_moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     auto *hook = reinterpret_cast<unsigned char *>(g_moduleBase + kBuildCameraRva);
     if (memcmp(hook, kBuildCameraSignature, sizeof(kBuildCameraSignature)) != 0) {
@@ -177,9 +294,10 @@ bool Install(bool enabled) {
     }
 
     g_installed = true;
-    logger::Log("INFO", "UseCorrectAspectFOV",
-                "hook installed address=0x%08lX reference_fov=80 reference_aspect=4:3",
-                reinterpret_cast<unsigned long>(hook));
+    logger::Log("INFO", "Camera",
+                "hook installed address=0x%08lX aspect_fov=%d high_frequency_visual=%d",
+                reinterpret_cast<unsigned long>(hook), g_fovEnabled,
+                g_highFrequencyVisualCameraEnabled);
     return true;
 }
 

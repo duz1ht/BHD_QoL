@@ -66,6 +66,24 @@ confinement before regular accumulation begins.
 
 `RenderFrameLimit` optionally paces calls to Direct3D 8 `Present` using an
 accumulated QPC deadline. Long stalls reset the deadline instead of triggering
-a burst of catch-up frames. The limiter is intentionally render-only: static
-analysis has not yet established a safe visual-camera state that can be updated
-independently from the authoritative input/simulation tick.
+a burst of catch-up frames.
+
+## High-frequency visual camera
+
+The main renderer constructs its camera source on the stack and calls the
+camera builder at `0x004B751A`. The return address `0x004B751F` uniquely
+distinguishes this call from map, preview, and auxiliary cameras. Static
+analysis of the builder at `0x004181A0` establishes that source offsets
+`0x04`/`0x08`/`0x0C` are the camera position and `0x10`/`0x14`/`0x18` are its
+three full-turn 32-bit angles. The builder copies these fields into the render
+camera and derives the matrices; it does not write them back to simulation.
+
+`HighFrequencyVisualCamera` hooks that already-validated builder and supplies
+a 64-byte stack copy for the main first-person call only. It interpolates from
+the previous authoritative transform to the current one over the observed
+8--33 ms update interval (falling back to 16 ms), using shortest-arc modular
+angle interpolation. Non-transform fields always come from the current source,
+and movement larger than 64 Q16 world units snaps to avoid smoothing teleports.
+The option therefore changes visual construction only, but necessarily adds up
+to one update of interpolation delay. Special camera modes and every other
+builder caller retain the original source unchanged.

@@ -28,6 +28,7 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | `BorderlessFullscreen` | `1` | Runs the game in a borderless window that covers the entire monitor. |
 | `ForceDesktopResolution` | `1` | With `BorderlessFullscreen=1`, uses the monitor resolution as the internal render resolution. At `0`, the resolution selected in the game is stretched to fill the screen. Has no effect when borderless mode is disabled. |
 | `UseCorrectAspectFOV` | `1` | Corrects the field of view for internal render resolutions wider than 4:3 without changing zoom, scopes, or special cameras. |
+| `HighFrequencyVisualCamera` | `0` | Interpolates the first-person visual camera at render frequency. It does not alter simulation/input ticks and adds up to one authoritative update (about 16 ms) of visual latency. |
 | `DPIAware` | `1` | Prevents Windows DPI scaling from distorting window, monitor, and cursor coordinates. Recommended for borderless mode. |
 | `RawMouseInput` | `1` | Uses Windows Raw Input for more reliable relative mouse input while preserving the game's sensitivity, inversion, and bindings. |
 | `MouseScalingFix` | `1` | Preserves fractional movement for every fractional sensitivity scale, preventing small mouse movements from being rounded away in normal aim and scopes. |
@@ -51,6 +52,7 @@ Complete default configuration:
 BorderlessFullscreen=1
 ForceDesktopResolution=1
 UseCorrectAspectFOV=1
+HighFrequencyVisualCamera=0
 DPIAware=1
 RawMouseInput=1
 MouseScalingFix=1
@@ -111,6 +113,15 @@ also enabled, `frame_limit`, `limit_wait_avg_us`, `limit_wait_max_us`, and
 `limit_misses` describe its behavior. The limiter affects rendering only and
 does not pretend to raise the game's approximately 62 Hz authoritative camera
 tick.
+
+`HighFrequencyVisualCamera` smooths the main first-person camera source passed
+to the renderer. Position is interpolated linearly and the three 32-bit angle
+fields follow the shortest modular arc, including across the turn boundary.
+Only a stack copy is changed: the authoritative camera, player aim, weapon
+logic, and simulation state remain untouched. Teleports larger than 64 world
+units snap immediately. The interpolation intentionally trails the latest
+authoritative state by at most one update; leave it disabled if minimum input
+latency is more important than visual smoothness.
 
 ## Compatibility
 
