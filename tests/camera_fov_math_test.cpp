@@ -19,6 +19,7 @@ int main() {
     assert(CorrectHorizontalFovQ16(1920, 0) == kVanillaFovQ16);
     assert(CorrectHorizontalFovQ16(-1, 1080) == kVanillaFovQ16);
     assert(CorrectHorizontalFovQ16(1024, 768) == kVanillaFovQ16);
+    assert(CorrectHorizontalFovQ16(1440, 1080) == kVanillaFovQ16);
     assert(CorrectHorizontalFovQ16(1280, 1024) == kVanillaFovQ16);
     assert(CorrectHorizontalFovQ16(9000, 1000) == kVanillaFovQ16);
     ExpectNear(Degrees(CorrectHorizontalFovQ16(1680, 1050)), 90.39, 0.02);

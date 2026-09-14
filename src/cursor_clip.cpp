@@ -1,8 +1,8 @@
 #include "cursor_clip.h"
 
 #include <cstdint>
-#include <cstdlib>
 
+#include "cursor_clip_math.h"
 #include "logger.h"
 
 namespace cursor_clip {
@@ -35,6 +35,14 @@ bool IsContained(const RECT& clip, const RECT& bounds) {
            clip.right <= bounds.right && clip.bottom <= bounds.bottom;
 }
 
+RectEdges ToRectEdges(const RECT& rect) {
+    return {rect.left, rect.top, rect.right, rect.bottom};
+}
+
+bool RectCoversFullClient(const RECT& clip, const RECT& client) {
+    return cursor_clip::CoversFullClient(ToRectEdges(clip), ToRectEdges(client));
+}
+
 bool WindowReady() {
     return g_window != nullptr && IsWindow(g_window) && IsWindowVisible(g_window) &&
            !IsIconic(g_window) && GetForegroundWindow() == g_window && GetFocus() == g_window;
@@ -61,13 +69,10 @@ void LogSnapshot(const char* trigger) {
             status = "not_confined";
             canEscape = "yes";
         } else if (IsContained(clip, client)) {
-            const bool full = std::abs(clip.left - client.left) <= 1 &&
-                              std::abs(clip.top - client.top) <= 1 &&
-                              std::abs(clip.right - client.right) <= 1 &&
-                              std::abs(clip.bottom - client.bottom) <= 1;
+            const bool full = RectCoversFullClient(clip, client);
             status = full ? "confined_to_full_client" : "confined_inside_client";
             canEscape = "no";
-            if (!IsIconic(g_window)) {
+            if (full && !IsIconic(g_window)) {
                 g_lastValidClip = clip;
                 g_hasLastValidClip = true;
             }
@@ -121,7 +126,8 @@ bool TryRecover(const char* trigger) {
     if (!g_recoveryPending && g_ready) {
         RECT client = {};
         RECT clip = {};
-        if (GetClientScreenRect(&client) && GetClipCursor(&clip) && IsContained(clip, client)) return true;
+        if (GetClientScreenRect(&client) && GetClipCursor(&clip) &&
+            RectCoversFullClient(clip, client)) return true;
         logger::Log("WARN", "CursorClip", "active confinement lost; recovery requested by %s", trigger);
         g_recoveryPending = true;
         g_ready = false;
@@ -145,7 +151,7 @@ bool TryRecover(const char* trigger) {
     RECT confirmed = {};
     RECT client = {};
     const bool valid = applied && GetClipCursor(&confirmed) && GetClientScreenRect(&client) &&
-                       IsContained(confirmed, client);
+                       RectCoversFullClient(confirmed, client);
     logger::Log(valid ? "INFO" : "ERROR", "CursorClip",
                 "operation=restore source=%s requested=(%ld,%ld)-(%ld,%ld) "
                 "confirmed=(%ld,%ld)-(%ld,%ld) result=%d error=%lu",

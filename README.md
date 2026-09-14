@@ -27,12 +27,12 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | --- | :---: | --- |
 | `BorderlessFullscreen` | `1` | Runs the game in a borderless window that covers the entire monitor. |
 | `ForceDesktopResolution` | `1` | With `BorderlessFullscreen=1`, uses the monitor resolution as the internal render resolution. At `0`, the resolution selected in the game is stretched to fill the screen. Has no effect when borderless mode is disabled. |
-| `UseCorrectAspectFOV` | `1` | Corrects the field of view for aspect ratios other than 4:3 without changing zoom, scopes, or special cameras. |
+| `UseCorrectAspectFOV` | `1` | Corrects the field of view for internal render resolutions wider than 4:3 without changing zoom, scopes, or special cameras. |
 | `DPIAware` | `1` | Prevents Windows DPI scaling from distorting window, monitor, and cursor coordinates. Recommended for borderless mode. |
 | `RawMouseInput` | `1` | Uses Windows Raw Input for more reliable relative mouse input while preserving the game's sensitivity, inversion, and bindings. |
 | `MouseScalingFix` | `1` | Fixes rounding of small mouse movements, especially noticeable when using scoped weapons. |
 | `AdaptiveScreenCenter` | `1` | Calculates the screen center from the current resolution instead of using fixed values. |
-| `ClipCursorFix` | `1` | Uses the current resolution when confining the cursor instead of fixed 640x480 bounds. |
+| `ScaleCursorClipToResolution` | `1` | Uses the current resolution when confining the cursor instead of fixed 640x480 bounds. |
 | `RestoreCursorClip` | `1` | Restores cursor confinement after Alt+Tab, focus, resolution, display, or window changes. Works independently of `RawMouseInput`. |
 
 ### `[Logging]`
@@ -53,7 +53,7 @@ DPIAware=1
 RawMouseInput=1
 MouseScalingFix=1
 AdaptiveScreenCenter=1
-ClipCursorFix=1
+ScaleCursorClipToResolution=1
 RestoreCursorClip=1
 
 [Logging]

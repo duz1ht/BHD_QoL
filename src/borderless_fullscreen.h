@@ -11,7 +11,4 @@ bool Initialize(bool enabled, bool forceDesktopResolution);
 // Applies (or re-applies) the borderless frame and full-monitor geometry.
 bool Apply(HWND window, const char* trigger);
 
-// Returns the physical output size used by borderless presentation.
-bool GetOutputSize(LONG* width, LONG* height);
-
 }  // namespace borderless_fullscreen

@@ -26,7 +26,7 @@ HMODULE g_realDInput8 = nullptr;
 volatile LONG g_initialized = 0;
 struct PatchConfig {
     bool adaptiveScreenCenter = true;
-    bool clipCursorFix = true;
+    bool scaleCursorClipToResolution = true;
     bool rawMouseInput = true;
     bool restoreCursorClip = true;
     bool mouseScalingFix = true;
@@ -227,7 +227,8 @@ PatchConfig LoadPatchConfig() {
     PatchConfig config = {};
     config.adaptiveScreenCenter =
         BoolFromIni(iniPath, L"AdaptiveScreenCenter", config.adaptiveScreenCenter);
-    config.clipCursorFix = BoolFromIni(iniPath, L"ClipCursorFix", config.clipCursorFix);
+    config.scaleCursorClipToResolution = BoolFromIni(
+        iniPath, L"ScaleCursorClipToResolution", config.scaleCursorClipToResolution);
     config.rawMouseInput = BoolFromIni(iniPath, L"RawMouseInput", config.rawMouseInput);
     config.restoreCursorClip =
         BoolFromIni(iniPath, L"RestoreCursorClip", config.restoreCursorClip);
@@ -254,12 +255,12 @@ void ApplyBhdPatches() {
     const PatchConfig config = LoadPatchConfig();
     logger::Initialize(config.loggingEnabled);
     logger::Log("INFO", "Config",
-                "AdaptiveScreenCenter=%d ClipCursorFix=%d RawMouseInput=%d "
+                "AdaptiveScreenCenter=%d ScaleCursorClipToResolution=%d RawMouseInput=%d "
                 "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
                 "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
-                config.adaptiveScreenCenter, config.clipCursorFix, config.rawMouseInput,
-                config.restoreCursorClip, config.mouseScalingFix,
+                config.adaptiveScreenCenter, config.scaleCursorClipToResolution,
+                config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
                 config.useCorrectAspectFov, config.dpiAware,
                 config.borderlessFullscreen, config.forceDesktopResolution,
                 config.rawInputStatisticsIntervalMs);
@@ -296,13 +297,13 @@ void ApplyBhdPatches() {
     } else {
         logger::Log("INFO", "AdaptiveScreenCenter", "feature disabled");
     }
-    if (config.clipCursorFix) {
-        logger::Log("INFO", "ClipCursorFix", "feature enabled");
+    if (config.scaleCursorClipToResolution) {
+        logger::Log("INFO", "ScaleCursorClipToResolution", "feature enabled");
         if (ApplyPatch(kInitialClipCursorCodeCavePatch) && ApplyPatch(kClipCursorCodeCavePatch)) {
             ApplyPatchGroup(kClipCursorPatches);
         }
     } else {
-        logger::Log("INFO", "ClipCursorFix", "feature disabled");
+        logger::Log("INFO", "ScaleCursorClipToResolution", "feature disabled");
     }
     const bool rawInstalled =
         raw_input::Install({config.rawMouseInput, config.rawInputStatisticsIntervalMs});

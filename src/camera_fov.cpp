@@ -7,7 +7,6 @@
 #include <cstring>
 #include <limits>
 
-#include "borderless_fullscreen.h"
 #include "camera_fov_math.h"
 #if defined(_MSC_VER)
 #include <intrin.h>
@@ -44,8 +43,7 @@ LONG g_cachedWidth = -1;
 LONG g_cachedHeight = -1;
 int32_t g_cachedFirstPersonFov = kVanillaFovQ16;
 
-void GetDisplayedSize(LONG* width, LONG* height) {
-    if (borderless_fullscreen::GetOutputSize(width, height)) return;
+void GetRenderSize(LONG* width, LONG* height) {
     *width = *reinterpret_cast<const volatile LONG*>(g_moduleBase + kRenderWidthRva);
     *height = *reinterpret_cast<const volatile LONG*>(g_moduleBase + kRenderHeightRva);
 }
@@ -53,7 +51,7 @@ void GetDisplayedSize(LONG* width, LONG* height) {
 int32_t GetCorrectedFov() {
     LONG width = 0;
     LONG height = 0;
-    GetDisplayedSize(&width, &height);
+    GetRenderSize(&width, &height);
     if (width == g_cachedWidth && height == g_cachedHeight) {
         return g_cachedFirstPersonFov;
     }
@@ -61,7 +59,7 @@ int32_t GetCorrectedFov() {
     g_cachedHeight = height;
     g_cachedFirstPersonFov = CorrectHorizontalFovQ16(width, height);
     logger::Log("INFO", "UseCorrectAspectFOV",
-                "display_size=%ldx%ld visual_fov=%.2f gameplay_fov=80",
+                "render_size=%ldx%ld visual_fov=%.2f gameplay_fov=80",
                 width, height,
                 static_cast<double>(g_cachedFirstPersonFov) / 65536.0);
     return g_cachedFirstPersonFov;
