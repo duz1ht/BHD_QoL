@@ -1,11 +1,50 @@
 #include "frame_pacing.h"
 
-#include <d3d8.h>
-
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
 #include "logger.h"
+
+// The diagnostics only need the stable Direct3D 8 COM ABI and presentation
+// structure. Defining that small surface locally avoids requiring the legacy
+// DirectX SDK's d3d8.h when building with current Visual Studio installations.
+struct IDirect3D8;
+struct IDirect3DDevice8;
+
+using D3DDEVTYPE = UINT;
+using D3DFORMAT = UINT;
+using D3DMULTISAMPLE_TYPE = UINT;
+using D3DSWAPEFFECT = UINT;
+
+struct D3DPRESENT_PARAMETERS {
+    UINT BackBufferWidth;
+    UINT BackBufferHeight;
+    D3DFORMAT BackBufferFormat;
+    UINT BackBufferCount;
+    D3DMULTISAMPLE_TYPE MultiSampleType;
+    D3DSWAPEFFECT SwapEffect;
+    HWND hDeviceWindow;
+    BOOL Windowed;
+    BOOL EnableAutoDepthStencil;
+    D3DFORMAT AutoDepthStencilFormat;
+    DWORD Flags;
+    UINT FullScreen_RefreshRateInHz;
+    UINT FullScreen_PresentationInterval;
+};
+
+static_assert(sizeof(void*) == 4, "BHD QoL must be built as a 32-bit DLL");
+static_assert(sizeof(D3DPRESENT_PARAMETERS) == 52,
+              "Unexpected Direct3D 8 presentation-parameter ABI");
+static_assert(offsetof(D3DPRESENT_PARAMETERS, FullScreen_PresentationInterval) == 48,
+              "Unexpected Direct3D 8 presentation-interval offset");
+
+constexpr UINT D3DPRESENT_INTERVAL_DEFAULT = 0x00000000;
+constexpr UINT D3DPRESENT_INTERVAL_ONE = 0x00000001;
+constexpr UINT D3DPRESENT_INTERVAL_TWO = 0x00000002;
+constexpr UINT D3DPRESENT_INTERVAL_THREE = 0x00000004;
+constexpr UINT D3DPRESENT_INTERVAL_FOUR = 0x00000008;
+constexpr UINT D3DPRESENT_INTERVAL_IMMEDIATE = 0x80000000u;
 
 namespace frame_pacing {
 namespace {

@@ -73,6 +73,9 @@ cmake --build build
 ```
 
 The resulting DLL must be named `dinput8.dll`.
+The frame-pacing diagnostics use a local declaration of the small Direct3D 8
+ABI surface they require, so the legacy DirectX SDK and `d3d8.h` are not build
+dependencies.
 
 ## Mouse diagnostics
 
