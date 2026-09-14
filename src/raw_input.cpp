@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "game_window.h"
+#include "frame_pacing.h"
 #include "logger.h"
 #include "mouse_scaling_fix.h"
 
@@ -377,6 +378,7 @@ extern "C" void __cdecl RawPollMouseInput() {
     }
 
     const LONG64 pollTick = CounterNow();
+    frame_pacing::NotifyInputPoll(pollTick);
     const LONG64 previousPoll = InterlockedExchange64(&g_lastPollTick, pollTick);
     if (previousPoll != 0) {
         const LONG64 intervalUs = TicksToMicroseconds(pollTick - previousPoll);

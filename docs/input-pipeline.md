@@ -44,6 +44,10 @@ With logging enabled, `RawInput.Latency` reports:
 
 `MouseScaling.Stats` reports input/output totals, fractional calls, and scale
 transitions. These aggregated diagnostics avoid I/O and allocation in the
-per-report path. Actual display presentation latency remains outside this
-DirectInput proxy and requires an external frame-time/presentation tool; poll
-intervals distinguish that problem from delayed game-side input consumption.
+per-report path.
+
+Optional `FramePacingDiagnostics` hooks Direct3D 8 device creation, reset, and
+presentation. `FramePacing.Config` records the requested presentation interval
+and `FramePacing.Stats` correlates frame time with the latest input poll. This
+measures the CPU-side call to `Present`; measuring when the pixel physically
+appears still requires an external latency tool.

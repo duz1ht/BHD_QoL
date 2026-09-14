@@ -9,6 +9,7 @@
 #include "borderless_fullscreen.h"
 #include "borderless_gamma.h"
 #include "game_window.h"
+#include "frame_pacing.h"
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
 #include "camera_fov.h"
@@ -35,6 +36,7 @@ struct PatchConfig {
     bool borderlessFullscreen = true;
     bool forceDesktopResolution = true;
     bool loggingEnabled = false;
+    bool framePacingDiagnostics = false;
     unsigned long rawInputStatisticsIntervalMs = 5000;
     bool invalidStatisticsInterval = false;
 };
@@ -242,6 +244,9 @@ PatchConfig LoadPatchConfig() {
         BoolFromIni(iniPath, L"ForceDesktopResolution", config.forceDesktopResolution);
     config.loggingEnabled =
         GetPrivateProfileIntW(L"Logging", L"Enabled", config.loggingEnabled ? 1 : 0, iniPath) != 0;
+    config.framePacingDiagnostics =
+        GetPrivateProfileIntW(L"Logging", L"FramePacingDiagnostics",
+                              config.framePacingDiagnostics ? 1 : 0, iniPath) != 0;
     const int interval = GetPrivateProfileIntW(L"Logging", L"RawInputStatisticsIntervalMs",
                                                 config.rawInputStatisticsIntervalMs, iniPath);
     config.invalidStatisticsInterval = interval < 1000 || interval > 60000;
@@ -258,11 +263,12 @@ void ApplyBhdPatches() {
                 "AdaptiveScreenCenter=%d ScaleCursorClipToResolution=%d RawMouseInput=%d "
                 "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
                 "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
-                "RawInputStatisticsIntervalMs=%lu",
+                "FramePacingDiagnostics=%d RawInputStatisticsIntervalMs=%lu",
                 config.adaptiveScreenCenter, config.scaleCursorClipToResolution,
                 config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
                 config.useCorrectAspectFov, config.dpiAware,
                 config.borderlessFullscreen, config.forceDesktopResolution,
+                config.framePacingDiagnostics,
                 config.rawInputStatisticsIntervalMs);
     if (config.invalidStatisticsInterval) {
         logger::Log("WARN", "Config",
@@ -276,6 +282,9 @@ void ApplyBhdPatches() {
     }
     logger::Log("INFO", "Executable", "image base validated: 0x%08lX",
                 static_cast<unsigned long>(imageBase));
+    frame_pacing::Install(
+        {config.framePacingDiagnostics && config.loggingEnabled,
+         config.rawInputStatisticsIntervalMs});
     mouse_scaling_fix::Install(config.mouseScalingFix);
     camera_fov::Install(config.useCorrectAspectFov);
     dpi_awareness::Initialize(config.dpiAware);

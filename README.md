@@ -40,6 +40,7 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | Option | Default | Description |
 | --- | :---: | --- |
 | `Enabled` | `0` | Creates a new `BHD_QoL_<date>_<time>_<pid>.log` beside `dfbhd.exe` for each session. Enable it to diagnose failures or features that were not applied. |
+| `FramePacingDiagnostics` | `0` | Hooks Direct3D 8 `CreateDevice`, `Reset`, and `Present` to report frame time, requested presentation interval/VSync, and input-poll-to-present delay. Requires logging and is diagnostic-only. |
 | `RawInputStatisticsIntervalMs` | `5000` | Sets the interval, in milliseconds, for Raw Input, input-latency, scaling, and cursor-confinement diagnostics in the log. Accepts values from `1000` to `60000` and does not affect mouse latency. |
 
 Complete default configuration:
@@ -58,6 +59,7 @@ RestoreCursorClip=1
 
 [Logging]
 Enabled=0
+FramePacingDiagnostics=0
 RawInputStatisticsIntervalMs=5000
 ```
 
@@ -81,6 +83,13 @@ fractional scaling calls, scale transitions, and input/output totals without
 performing log I/O for each mouse report. See
 [`docs/input-pipeline.md`](docs/input-pipeline.md) for the verified executable
 path and field descriptions.
+
+Enable `FramePacingDiagnostics=1` together with `Enabled=1` to also emit
+`FramePacing.Config` and `FramePacing.Stats`. The former records the Direct3D 8
+presentation parameters requested at device creation/reset. The latter reports
+average/maximum frame time, estimated FPS, failed presents, and delay from the
+latest input poll to the following `Present`. This option observes timing only;
+it does not force VSync or change the game's presentation parameters.
 
 ## Compatibility
 
