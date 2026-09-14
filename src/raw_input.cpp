@@ -7,6 +7,7 @@
 
 #include "game_window.h"
 #include "logger.h"
+#include "mouse_scaling_fix.h"
 
 namespace raw_input {
 namespace {
@@ -41,6 +42,20 @@ volatile LONG g_reportCount = 0;
 volatile LONG g_pollCount = 0;
 volatile LONG g_intervalX = 0;
 volatile LONG g_intervalY = 0;
+alignas(8) volatile LONG64 g_oldestMovementTick = 0;
+alignas(8) volatile LONG64 g_newestMovementTick = 0;
+volatile LONG g_pendingMovementReports = 0;
+volatile LONG g_latencySamples = 0;
+alignas(8) volatile LONG64 g_totalOldestAgeUs = 0;
+alignas(8) volatile LONG64 g_totalNewestAgeUs = 0;
+alignas(8) volatile LONG64 g_maxOldestAgeUs = 0;
+volatile LONG g_maxReportsPerPoll = 0;
+volatile LONG g_emptyPolls = 0;
+alignas(8) volatile LONG64 g_lastPollTick = 0;
+alignas(8) volatile LONG64 g_totalPollIntervalUs = 0;
+alignas(8) volatile LONG64 g_maxPollIntervalUs = 0;
+volatile LONG g_pollIntervals = 0;
+LARGE_INTEGER g_counterFrequency = {};
 volatile LONG g_absoluteReports = 0;
 volatile LONG g_sizeFailures = 0;
 volatile LONG g_readFailures = 0;
@@ -51,6 +66,37 @@ HWND g_window = nullptr;
 PollMouseInputFn g_legacyPoll = nullptr;
 HANDLE g_loggedDevices[16] = {};
 size_t g_loggedDeviceCount = 0;
+
+LONG64 CounterNow() {
+    LARGE_INTEGER value = {};
+    QueryPerformanceCounter(&value);
+    return value.QuadPart;
+}
+
+LONG64 TicksToMicroseconds(LONG64 ticks) {
+    if (ticks <= 0 || g_counterFrequency.QuadPart <= 0) return 0;
+    const LONG64 seconds = ticks / g_counterFrequency.QuadPart;
+    const LONG64 remainder = ticks % g_counterFrequency.QuadPart;
+    return seconds * 1000000 + remainder * 1000000 / g_counterFrequency.QuadPart;
+}
+
+void UpdateMaximum(volatile LONG64* destination, LONG64 value) {
+    LONG64 observed = InterlockedCompareExchange64(destination, 0, 0);
+    while (value > observed) {
+        const LONG64 previous = InterlockedCompareExchange64(destination, value, observed);
+        if (previous == observed) break;
+        observed = previous;
+    }
+}
+
+void UpdateMaximum(volatile LONG* destination, LONG value) {
+    LONG observed = InterlockedCompareExchange(destination, 0, 0);
+    while (value > observed) {
+        const LONG previous = InterlockedCompareExchange(destination, value, observed);
+        if (previous == observed) break;
+        observed = previous;
+    }
+}
 
 bool WindowHasInputFocus(HWND* focusedWindow = nullptr) {
     const HWND focus = GetFocus();
@@ -99,6 +145,9 @@ void ClearInputState() {
     InterlockedExchange(&g_accumX, 0);
     InterlockedExchange(&g_accumY, 0);
     InterlockedExchange(&g_buttonState, 0);
+    InterlockedExchange(&g_pendingMovementReports, 0);
+    InterlockedExchange64(&g_oldestMovementTick, 0);
+    InterlockedExchange64(&g_newestMovementTick, 0);
 }
 
 void SetButton(USHORT flags, USHORT downFlag, USHORT upFlag, LONG stateBit,
@@ -192,6 +241,10 @@ void ProcessRawInput(HRAWINPUT handle) {
             const RAWMOUSE& mouse = input->data.mouse;
             if ((mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0) {
                 if (InterlockedExchange(&g_dropNextMovement, 0) == 0) {
+                    const LONG64 received = CounterNow();
+                    InterlockedCompareExchange64(&g_oldestMovementTick, received, 0);
+                    InterlockedExchange64(&g_newestMovementTick, received);
+                    InterlockedIncrement(&g_pendingMovementReports);
                     InterlockedExchangeAdd(&g_accumX, mouse.lLastX);
                     InterlockedExchangeAdd(&g_accumY, mouse.lLastY);
                     UpdateVirtualCursor(mouse.lLastX, mouse.lLastY);
@@ -323,9 +376,31 @@ extern "C" void __cdecl RawPollMouseInput() {
         return;
     }
 
+    const LONG64 pollTick = CounterNow();
+    const LONG64 previousPoll = InterlockedExchange64(&g_lastPollTick, pollTick);
+    if (previousPoll != 0) {
+        const LONG64 intervalUs = TicksToMicroseconds(pollTick - previousPoll);
+        InterlockedExchangeAdd64(&g_totalPollIntervalUs, intervalUs);
+        UpdateMaximum(&g_maxPollIntervalUs, intervalUs);
+        InterlockedIncrement(&g_pollIntervals);
+    }
     *reinterpret_cast<volatile LONG*>(kMouseState) = static_cast<LONG>(CurrentState());
     const LONG x = InterlockedExchange(&g_accumX, 0);
     const LONG y = InterlockedExchange(&g_accumY, 0);
+    const LONG reportsInPoll = InterlockedExchange(&g_pendingMovementReports, 0);
+    const LONG64 oldestTick = InterlockedExchange64(&g_oldestMovementTick, 0);
+    const LONG64 newestTick = InterlockedExchange64(&g_newestMovementTick, 0);
+    if (reportsInPoll > 0 && oldestTick != 0 && newestTick != 0) {
+        const LONG64 oldestAgeUs = TicksToMicroseconds(pollTick - oldestTick);
+        const LONG64 newestAgeUs = TicksToMicroseconds(pollTick - newestTick);
+        InterlockedExchangeAdd64(&g_totalOldestAgeUs, oldestAgeUs);
+        InterlockedExchangeAdd64(&g_totalNewestAgeUs, newestAgeUs);
+        UpdateMaximum(&g_maxOldestAgeUs, oldestAgeUs);
+        UpdateMaximum(&g_maxReportsPerPoll, reportsInPoll);
+        InterlockedIncrement(&g_latencySamples);
+    } else {
+        InterlockedIncrement(&g_emptyPolls);
+    }
     InterlockedExchangeAdd(&g_intervalX, x);
     InterlockedExchangeAdd(&g_intervalY, y);
     *reinterpret_cast<volatile LONG*>(kRelativeX) = x;
@@ -341,6 +416,15 @@ extern "C" void __cdecl RawPollMouseInput() {
         const LONG absolute = InterlockedExchange(&g_absoluteReports, 0);
         const LONG sizeFailures = InterlockedExchange(&g_sizeFailures, 0);
         const LONG readFailures = InterlockedExchange(&g_readFailures, 0);
+        const LONG latencySamples = InterlockedExchange(&g_latencySamples, 0);
+        const LONG64 totalOldestAgeUs = InterlockedExchange64(&g_totalOldestAgeUs, 0);
+        const LONG64 totalNewestAgeUs = InterlockedExchange64(&g_totalNewestAgeUs, 0);
+        const LONG64 maxOldestAgeUs = InterlockedExchange64(&g_maxOldestAgeUs, 0);
+        const LONG maxReportsPerPoll = InterlockedExchange(&g_maxReportsPerPoll, 0);
+        const LONG emptyPolls = InterlockedExchange(&g_emptyPolls, 0);
+        const LONG pollIntervals = InterlockedExchange(&g_pollIntervals, 0);
+        const LONG64 totalPollIntervalUs = InterlockedExchange64(&g_totalPollIntervalUs, 0);
+        const LONG64 maxPollIntervalUs = InterlockedExchange64(&g_maxPollIntervalUs, 0);
         g_lastStatisticsTick = now;
         logger::Log("INFO", "RawInput.Stats",
                     "interval_ms=%lu reports=%ld polls=%ld total_dx=%ld total_dy=%ld dropped=%ld "
@@ -348,7 +432,18 @@ extern "C" void __cdecl RawPollMouseInput() {
                     g_statisticsIntervalMs, reports, polls, totalX, totalY, dropped, absolute,
                     sizeFailures, readFailures,
                     InterlockedCompareExchange(&g_backendState, kInactive, kInactive) == kActive);
+        logger::Log("INFO", "RawInput.Latency",
+                    "samples=%ld oldest_avg_us=%lld newest_avg_us=%lld oldest_max_us=%lld "
+                    "reports_per_poll_max=%ld empty_polls=%ld poll_interval_avg_us=%lld "
+                    "poll_interval_max_us=%lld qpc_frequency=%lld",
+                    latencySamples,
+                    latencySamples ? totalOldestAgeUs / latencySamples : 0,
+                    latencySamples ? totalNewestAgeUs / latencySamples : 0,
+                    maxOldestAgeUs, maxReportsPerPoll, emptyPolls,
+                    pollIntervals ? totalPollIntervalUs / pollIntervals : 0,
+                    maxPollIntervalUs, g_counterFrequency.QuadPart);
         game_window::HandleStatisticsInterval();
+        mouse_scaling_fix::LogStatistics();
     }
 }
 
@@ -399,6 +494,7 @@ bool Install(const Settings& settings) {
     logger::Log("INFO", "RawInput", "feature enabled");
     g_enabled = true;
     g_statisticsIntervalMs = settings.statisticsIntervalMs;
+    QueryPerformanceFrequency(&g_counterFrequency);
     g_lastStatisticsTick = GetTickCount();
     if (!WriteDetour()) {
         g_enabled = false;

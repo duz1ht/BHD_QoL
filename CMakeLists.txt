@@ -4,7 +4,7 @@ project(BHD_QoL_DInput8 LANGUAGES CXX)
 add_library(dinput8 SHARED src/dinput8.cpp src/logger.cpp src/game_window.cpp
     src/cursor_clip.cpp src/cursor_visibility.cpp src/dpi_awareness.cpp
     src/borderless_fullscreen.cpp src/borderless_gamma.cpp
-    src/raw_input.cpp src/mouse_scaling_fix.cpp src/camera_fov.cpp src/camera_fov_math.cpp
+    src/raw_input.cpp src/mouse_scaling_fix.cpp src/mouse_scaling_math.cpp src/camera_fov.cpp src/camera_fov_math.cpp
     src/dinput8.def)
 target_compile_features(dinput8 PRIVATE cxx_std_17)
 
@@ -31,4 +31,9 @@ if(BUILD_TESTING)
     target_include_directories(cursor_clip_math_test PRIVATE src)
     target_compile_features(cursor_clip_math_test PRIVATE cxx_std_17)
     add_test(NAME cursor_clip_math COMMAND cursor_clip_math_test)
+
+    add_executable(mouse_scaling_math_test tests/mouse_scaling_math_test.cpp src/mouse_scaling_math.cpp)
+    target_include_directories(mouse_scaling_math_test PRIVATE src)
+    target_compile_features(mouse_scaling_math_test PRIVATE cxx_std_17)
+    add_test(NAME mouse_scaling_math COMMAND mouse_scaling_math_test)
 endif()

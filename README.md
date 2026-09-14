@@ -30,7 +30,7 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | `UseCorrectAspectFOV` | `1` | Corrects the field of view for internal render resolutions wider than 4:3 without changing zoom, scopes, or special cameras. |
 | `DPIAware` | `1` | Prevents Windows DPI scaling from distorting window, monitor, and cursor coordinates. Recommended for borderless mode. |
 | `RawMouseInput` | `1` | Uses Windows Raw Input for more reliable relative mouse input while preserving the game's sensitivity, inversion, and bindings. |
-| `MouseScalingFix` | `1` | Fixes rounding of small mouse movements, especially noticeable when using scoped weapons. |
+| `MouseScalingFix` | `1` | Preserves fractional movement for every fractional sensitivity scale, preventing small mouse movements from being rounded away in normal aim and scopes. |
 | `AdaptiveScreenCenter` | `1` | Calculates the screen center from the current resolution instead of using fixed values. |
 | `ScaleCursorClipToResolution` | `1` | Uses the current resolution when confining the cursor instead of fixed 640x480 bounds. |
 | `RestoreCursorClip` | `1` | Restores cursor confinement after Alt+Tab, focus, resolution, display, or window changes. Works independently of `RawMouseInput`. |
@@ -40,7 +40,7 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | Option | Default | Description |
 | --- | :---: | --- |
 | `Enabled` | `0` | Creates a new `BHD_QoL_<date>_<time>_<pid>.log` beside `dfbhd.exe` for each session. Enable it to diagnose failures or features that were not applied. |
-| `RawInputStatisticsIntervalMs` | `5000` | Sets the interval, in milliseconds, for Raw Input and cursor-confinement diagnostics in the log. Accepts values from `1000` to `60000` and does not affect mouse latency. |
+| `RawInputStatisticsIntervalMs` | `5000` | Sets the interval, in milliseconds, for Raw Input, input-latency, scaling, and cursor-confinement diagnostics in the log. Accepts values from `1000` to `60000` and does not affect mouse latency. |
 
 Complete default configuration:
 
@@ -71,6 +71,16 @@ cmake --build build
 ```
 
 The resulting DLL must be named `dinput8.dll`.
+
+## Mouse diagnostics
+
+Set `Logging.Enabled=1` to emit aggregated `RawInput.Latency` and
+`MouseScaling.Stats` records. They show how long raw reports wait for the game
+poll, input-consumption pacing, reports grouped per poll, empty polls,
+fractional scaling calls, scale transitions, and input/output totals without
+performing log I/O for each mouse report. See
+[`docs/input-pipeline.md`](docs/input-pipeline.md) for the verified executable
+path and field descriptions.
 
 ## Compatibility
 

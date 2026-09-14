@@ -8,10 +8,10 @@
 #include <limits>
 
 #include "logger.h"
+#include "mouse_scaling_math.h"
 
 namespace mouse_scaling_fix {
 namespace {
-constexpr uintptr_t kMouseScaleAddress = 0x009F20E4;
 constexpr size_t kHookLength = 25;
 
 const unsigned char kScaleBlockSignature[] = {
@@ -25,44 +25,26 @@ const unsigned char kScaleBlockSignature[] = {
     0x0F, 0xAC, 0xD0, 0x10, // shrd eax,edx,16
 };
 
-struct FractionState {
-  int32_t scale;
-  int64_t remainder[2];
-  bool active;
-};
-
-FractionState g_state = {};
-
-int32_t OriginalScale(int32_t delta, int32_t scale) {
-  const uint64_t product =
-      static_cast<uint64_t>(static_cast<int64_t>(delta) * scale);
-  return static_cast<int32_t>(product >> 16);
-}
+FractionalScaler g_scaler;
+volatile LONG g_scaleCalls = 0;
+volatile LONG g_fractionalCalls = 0;
+volatile LONG g_scaleTransitions = 0;
+volatile LONG g_lastScale = 0;
+alignas(8) volatile LONG64 g_inputX = 0;
+alignas(8) volatile LONG64 g_inputY = 0;
+alignas(8) volatile LONG64 g_outputX = 0;
+alignas(8) volatile LONG64 g_outputY = 0;
 
 extern "C" int32_t __stdcall ScaleWithRemainder(int32_t delta, int32_t scale,
                                                 int32_t axis) {
-  const int32_t baseScale = static_cast<int32_t>(
-      static_cast<uint32_t>(
-          *reinterpret_cast<volatile int32_t *>(kMouseScaleAddress))
-      << 11);
-  const bool needsCorrection = scale != baseScale && (scale & 0xFFFF) != 0;
-  if (!needsCorrection) {
-    Reset();
-    return OriginalScale(delta, scale);
-  }
-
-  if (!g_state.active || g_state.scale != scale) {
-    g_state.scale = scale;
-    g_state.remainder[0] = 0;
-    g_state.remainder[1] = 0;
-    g_state.active = true;
-  }
-
-  const int safeAxis = axis == 0 ? 0 : 1;
-  const int64_t value =
-      static_cast<int64_t>(delta) * scale + g_state.remainder[safeAxis];
-  const int32_t output = static_cast<int32_t>(value / 65536);
-  g_state.remainder[safeAxis] = value - static_cast<int64_t>(output) * 65536;
+  InterlockedIncrement(&g_scaleCalls);
+  if ((scale & 0xFFFF) != 0) InterlockedIncrement(&g_fractionalCalls);
+  const LONG previousScale = InterlockedExchange(&g_lastScale, scale);
+  if (previousScale != 0 && previousScale != scale)
+    InterlockedIncrement(&g_scaleTransitions);
+  const int32_t output = g_scaler.Scale(delta, scale, axis);
+  InterlockedExchangeAdd64(axis == 0 ? &g_inputX : &g_inputY, delta);
+  InterlockedExchangeAdd64(axis == 0 ? &g_outputX : &g_outputY, output);
   return output;
 }
 
@@ -198,10 +180,22 @@ bool InstallHook(unsigned char *hook) {
 } // namespace
 
 void Reset() {
-  g_state.scale = 0;
-  g_state.remainder[0] = 0;
-  g_state.remainder[1] = 0;
-  g_state.active = false;
+  g_scaler.Reset();
+  InterlockedExchange(&g_lastScale, 0);
+}
+
+void LogStatistics() {
+  logger::Log("INFO", "MouseScaling.Stats",
+              "calls=%ld fractional_calls=%ld scale_transitions=%ld "
+              "input_x=%lld input_y=%lld output_x=%lld output_y=%lld last_scale_q16=%ld",
+              InterlockedExchange(&g_scaleCalls, 0),
+              InterlockedExchange(&g_fractionalCalls, 0),
+              InterlockedExchange(&g_scaleTransitions, 0),
+              InterlockedExchange64(&g_inputX, 0),
+              InterlockedExchange64(&g_inputY, 0),
+              InterlockedExchange64(&g_outputX, 0),
+              InterlockedExchange64(&g_outputY, 0),
+              InterlockedCompareExchange(&g_lastScale, 0, 0));
 }
 
 bool Install(bool enabled) {

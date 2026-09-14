@@ -1,0 +1,49 @@
+# DFBHD mouse input pipeline
+
+This document records the statically verified addresses for the supported
+`DFBHD.EXE` (SHA-256
+`693676b5fb96012d32ee395ac23b4a8bf4d7dd9a9f25ae8e500749a2f0df34ea`).
+All modifications still validate their instruction bytes at runtime.
+
+## Capture and consumption
+
+- `0x005678F0` is the legacy mouse poll routine. It drains window mouse
+  messages and converts the cursor position relative to the fixed center into
+  `0x00F655EC` (X) and `0x00F655F0` (Y).
+- The main consumer calls that routine at `0x004B49CB`. The values are read
+  immediately at `0x004B49D0` and `0x004B49D5`, before the remainder handling
+  beginning at `0x004B49DB`. The Raw Input detour therefore already replaces
+  capture at the last safe point immediately before the game consumes it;
+  writing game globals asynchronously from `WM_INPUT` would introduce races.
+- Other static references at `0x0045FE2D`/`0x0045FE3D` feed the player aiming
+  path. References around `0x004E33A4` classify the dominant movement axis for
+  a separate input/event path and do not update camera angles.
+
+## Sensitivity scaling
+
+The player aiming path reads the configured base sensitivity at `0x009F20E4`,
+converts it to Q16 at `0x0045FE4C`, and may replace that scale through the calls
+between `0x0045FE58` and `0x0045FE7F`. X and Y are multiplied and truncated at
+`0x0045FE82` through `0x0045FE9B`.
+
+`MouseScalingFix` hooks that unique multiplication block. Fractional remainder
+preservation applies to every fractional Q16 scale, including the base scale;
+integral scales retain the original operation. Axis state is independent and a
+scale transition resets only the affected axis.
+
+## Runtime diagnostics
+
+With logging enabled, `RawInput.Latency` reports:
+
+- average age of the oldest and newest report consumed by a non-empty poll;
+- maximum oldest-report age and reports grouped into a poll;
+- empty polls;
+- average and maximum poll interval, a direct measure of input-consumption
+  pacing and a useful frame-pacing proxy;
+- the QPC frequency used for all timing.
+
+`MouseScaling.Stats` reports input/output totals, fractional calls, and scale
+transitions. These aggregated diagnostics avoid I/O and allocation in the
+per-report path. Actual display presentation latency remains outside this
+DirectInput proxy and requires an external frame-time/presentation tool; poll
+intervals distinguish that problem from delayed game-side input consumption.
