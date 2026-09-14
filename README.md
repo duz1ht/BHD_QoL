@@ -123,6 +123,13 @@ units snap immediately. The interpolation intentionally trails the latest
 authoritative state by at most one update; leave it disabled if minimum input
 latency is more important than visual smoothness.
 
+The current implementation does not interpolate world entities or the
+first-person viewmodel. Because those objects remain on the authoritative
+timeline while the camera trails it, enabling the option can cause visible
+relative shaking. See
+[`docs/visual-interpolation-research.md`](docs/visual-interpolation-research.md)
+for the verified executable layout and the remaining safe-hook requirements.
+
 ## Compatibility
 
 Before applying each modification, the DLL verifies the expected bytes in the executable. If the `dfbhd.exe` version is incompatible, the affected modification is not applied. Set `Logging.Enabled=1` to check the results.

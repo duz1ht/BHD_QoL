@@ -87,3 +87,9 @@ and movement larger than 64 Q16 world units snaps to avoid smoothing teleports.
 The option therefore changes visual construction only, but necessarily adds up
 to one update of interpolation delay. Special camera modes and every other
 builder caller retain the original source unchanged.
+
+Camera-only interpolation does not yet synchronize moving actors or the
+first-person viewmodel and can therefore produce relative shaking. The static
+findings, confirmed actor-pool layout, rejected unsafe hook candidates, and
+remaining render-boundary work are recorded in
+[`visual-interpolation-research.md`](visual-interpolation-research.md).
