@@ -48,6 +48,16 @@ per-report path.
 
 Optional `FramePacingDiagnostics` hooks Direct3D 8 device creation, reset, and
 presentation. `FramePacing.Config` records the requested presentation interval
-and `FramePacing.Stats` correlates frame time with the latest input poll. This
+and `FramePacing.Stats` correlates frame time with the latest input poll, records
+the time blocked inside `Present`, separates stalls of at least 250 ms from the
+steady-state frame average, and reports the actual duration of each sample
+window. Input-poll counts and Presents per poll make the fixed camera/update
+cadence visible without changing the game's authoritative simulation. This
 measures the CPU-side call to `Present`; measuring when the pixel physically
 appears still requires an external latency tool.
+
+After startup or input reactivation, movement reports are kept out of the game
+accumulators until its first mouse poll. Buttons, wheel events, and virtual menu
+cursor updates continue normally. That first poll returns zero movement, logs
+the discarded pre-poll totals, and immediately verifies full-client cursor
+confinement before regular accumulation begins.

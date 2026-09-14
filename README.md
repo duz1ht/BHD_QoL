@@ -90,9 +90,17 @@ path and field descriptions.
 Enable `FramePacingDiagnostics=1` together with `Enabled=1` to also emit
 `FramePacing.Config` and `FramePacing.Stats`. The former records the Direct3D 8
 presentation parameters requested at device creation/reset. The latter reports
-average/maximum frame time, estimated FPS, failed presents, and delay from the
-latest input poll to the following `Present`. This option observes timing only;
+the configured and actual sample-window duration, average/maximum frame time,
+stalls, estimated FPS, time blocked inside `Present`, failed presents, and delay
+from the latest input poll to the following `Present`. It also reports input
+polls and Presents per poll to expose camera/update cadence independently from
+rendering. This option observes timing only;
 it does not force VSync or change the game's presentation parameters.
+
+Raw Input movement received before the first gameplay poll is intentionally
+discarded so menu/loading movement cannot produce a delayed camera jump. Mouse
+buttons, wheel events, and the virtual menu cursor remain active during that
+period. The first poll also verifies cursor confinement immediately.
 
 ## Compatibility
 

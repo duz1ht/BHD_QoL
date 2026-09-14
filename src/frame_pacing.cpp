@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "logger.h"
+#include "frame_pacing_math.h"
 
 // The diagnostics only need the stable Direct3D 8 COM ABI and presentation
 // structure. Defining that small surface locally avoids requiring the legacy
@@ -79,6 +80,17 @@ volatile LONG g_frameIntervals = 0;
 volatile LONG g_presentCalls = 0;
 volatile LONG g_presentFailures = 0;
 volatile LONG g_pollToPresentSamples = 0;
+volatile LONG g_inputPolls = 0;
+alignas(8) volatile LONG64 g_totalPresentCallUs = 0;
+alignas(8) volatile LONG64 g_maxPresentCallUs = 0;
+volatile LONG g_presentCallSamples = 0;
+volatile LONG g_presentCallsOver2Ms = 0;
+volatile LONG g_presentCallsOver8Ms = 0;
+volatile LONG g_presentCallsOver16Ms = 0;
+volatile LONG g_presentCallsOver33Ms = 0;
+volatile LONG g_stallCount = 0;
+alignas(8) volatile LONG64 g_maxStallUs = 0;
+alignas(8) volatile LONG64 g_statisticsWindowStartTick = 0;
 volatile LONG g_presentationInterval = D3DPRESENT_INTERVAL_DEFAULT;
 volatile LONG g_windowed = 0;
 volatile LONG g_backBufferWidth = 0;
@@ -105,6 +117,30 @@ void UpdateMaximum(volatile LONG64* destination, LONG64 value) {
         if (previous == observed) break;
         observed = previous;
     }
+}
+
+void ResetStatisticsWindow() {
+    InterlockedExchange64(&g_lastPresentTick, 0);
+    InterlockedExchange64(&g_totalFrameUs, 0);
+    InterlockedExchange64(&g_maxFrameUs, 0);
+    InterlockedExchange64(&g_totalPollToPresentUs, 0);
+    InterlockedExchange64(&g_maxPollToPresentUs, 0);
+    InterlockedExchange64(&g_totalPresentCallUs, 0);
+    InterlockedExchange64(&g_maxPresentCallUs, 0);
+    InterlockedExchange64(&g_maxStallUs, 0);
+    InterlockedExchange(&g_frameIntervals, 0);
+    InterlockedExchange(&g_presentCalls, 0);
+    InterlockedExchange(&g_presentFailures, 0);
+    InterlockedExchange(&g_pollToPresentSamples, 0);
+    InterlockedExchange(&g_inputPolls, 0);
+    InterlockedExchange(&g_presentCallSamples, 0);
+    InterlockedExchange(&g_presentCallsOver2Ms, 0);
+    InterlockedExchange(&g_presentCallsOver8Ms, 0);
+    InterlockedExchange(&g_presentCallsOver16Ms, 0);
+    InterlockedExchange(&g_presentCallsOver33Ms, 0);
+    InterlockedExchange(&g_stallCount, 0);
+    InterlockedExchange64(&g_statisticsWindowStartTick, CounterNow());
+    g_lastStatisticsTick = GetTickCount();
 }
 
 const char* PresentationIntervalName(UINT interval) {
@@ -140,28 +176,54 @@ void CapturePresentationParameters(const D3DPRESENT_PARAMETERS* parameters,
 }
 
 void ReportStatistics() {
+    const LONG64 reportTick = CounterNow();
+    const LONG64 windowStart = InterlockedExchange64(&g_statisticsWindowStartTick, reportTick);
+    const LONG64 actualIntervalMs =
+        windowStart ? TicksToMicroseconds(reportTick - windowStart) / 1000 : 0;
     const LONG frameIntervals = InterlockedExchange(&g_frameIntervals, 0);
     const LONG presents = InterlockedExchange(&g_presentCalls, 0);
     const LONG failures = InterlockedExchange(&g_presentFailures, 0);
     const LONG64 totalFrameUs = InterlockedExchange64(&g_totalFrameUs, 0);
     const LONG64 maxFrameUs = InterlockedExchange64(&g_maxFrameUs, 0);
     const LONG pollSamples = InterlockedExchange(&g_pollToPresentSamples, 0);
+    const LONG inputPolls = InterlockedExchange(&g_inputPolls, 0);
     const LONG64 totalPollToPresentUs = InterlockedExchange64(&g_totalPollToPresentUs, 0);
     const LONG64 maxPollToPresentUs = InterlockedExchange64(&g_maxPollToPresentUs, 0);
-    const LONG64 averageFrameUs = frameIntervals ? totalFrameUs / frameIntervals : 0;
+    const LONG presentCallSamples = InterlockedExchange(&g_presentCallSamples, 0);
+    const LONG64 totalPresentCallUs = InterlockedExchange64(&g_totalPresentCallUs, 0);
+    const LONG64 maxPresentCallUs = InterlockedExchange64(&g_maxPresentCallUs, 0);
+    const LONG callsOver2Ms = InterlockedExchange(&g_presentCallsOver2Ms, 0);
+    const LONG callsOver8Ms = InterlockedExchange(&g_presentCallsOver8Ms, 0);
+    const LONG callsOver16Ms = InterlockedExchange(&g_presentCallsOver16Ms, 0);
+    const LONG callsOver33Ms = InterlockedExchange(&g_presentCallsOver33Ms, 0);
+    const LONG stalls = InterlockedExchange(&g_stallCount, 0);
+    const LONG64 maxStallUs = InterlockedExchange64(&g_maxStallUs, 0);
+    const LONG64 averageFrameUs = AverageOrZero(totalFrameUs, frameIntervals);
     const LONG64 estimatedMilliHz = averageFrameUs ? 1000000000 / averageFrameUs : 0;
+    const LONG64 presentRateMilliHz = RateMilliHz(presents, actualIntervalMs);
+    const LONG64 presentsPerPollMilli = inputPolls > 0
+        ? static_cast<LONG64>(presents) * 1000 / inputPolls : 0;
     const UINT interval = static_cast<UINT>(
         InterlockedCompareExchange(&g_presentationInterval, 0, 0));
     logger::Log("INFO", "FramePacing.Stats",
-                "interval_ms=%lu presents=%ld failures=%ld frame_samples=%ld "
-                "frame_avg_us=%lld frame_max_us=%lld estimated_fps_millihz=%lld "
+                "configured_interval_ms=%lu actual_interval_ms=%lld presents=%ld failures=%ld frame_samples=%ld "
+                "frame_avg_us=%lld frame_max_us=%lld estimated_fps_millihz=%lld present_rate_millihz=%lld "
+                "input_polls=%ld presents_per_poll_milli=%lld "
                 "poll_to_present_samples=%ld poll_to_present_avg_us=%lld "
-                "poll_to_present_max_us=%lld windowed=%ld back_buffer=%ldx%ld "
+                "poll_to_present_max_us=%lld present_call_samples=%ld present_call_avg_us=%lld "
+                "present_call_max_us=%lld present_over_2ms=%ld present_over_8ms=%ld "
+                "present_over_16ms=%ld present_over_33ms=%ld stalls=%ld stall_max_us=%lld "
+                "windowed=%ld back_buffer=%ldx%ld "
                 "refresh_hz=%ld presentation_interval=%s(0x%08X)",
-                g_statisticsIntervalMs, presents, failures, frameIntervals, averageFrameUs,
-                maxFrameUs, estimatedMilliHz, pollSamples,
+                g_statisticsIntervalMs, actualIntervalMs, presents, failures, frameIntervals, averageFrameUs,
+                maxFrameUs, estimatedMilliHz, presentRateMilliHz, inputPolls,
+                presentsPerPollMilli, pollSamples,
                 pollSamples ? totalPollToPresentUs / pollSamples : 0,
-                maxPollToPresentUs, InterlockedCompareExchange(&g_windowed, 0, 0),
+                maxPollToPresentUs, presentCallSamples,
+                presentCallSamples ? totalPresentCallUs / presentCallSamples : 0,
+                maxPresentCallUs, callsOver2Ms, callsOver8Ms, callsOver16Ms,
+                callsOver33Ms, stalls, maxStallUs,
+                InterlockedCompareExchange(&g_windowed, 0, 0),
                 InterlockedCompareExchange(&g_backBufferWidth, 0, 0),
                 InterlockedCompareExchange(&g_backBufferHeight, 0, 0),
                 InterlockedCompareExchange(&g_fullScreenRefreshRate, 0, 0),
@@ -192,9 +254,14 @@ HRESULT WINAPI HookedPresent(IDirect3DDevice8* device, const RECT* source,
     const LONG64 previousPresent = InterlockedExchange64(&g_lastPresentTick, presentTick);
     if (previousPresent != 0) {
         const LONG64 frameUs = TicksToMicroseconds(presentTick - previousPresent);
-        InterlockedExchangeAdd64(&g_totalFrameUs, frameUs);
-        UpdateMaximum(&g_maxFrameUs, frameUs);
-        InterlockedIncrement(&g_frameIntervals);
+        if (IsFrameStall(frameUs)) {
+            InterlockedIncrement(&g_stallCount);
+            UpdateMaximum(&g_maxStallUs, frameUs);
+        } else {
+            InterlockedExchangeAdd64(&g_totalFrameUs, frameUs);
+            UpdateMaximum(&g_maxFrameUs, frameUs);
+            InterlockedIncrement(&g_frameIntervals);
+        }
     }
 
     const LONG64 pollTick = InterlockedCompareExchange64(&g_lastInputPollTick, 0, 0);
@@ -209,7 +276,16 @@ HRESULT WINAPI HookedPresent(IDirect3DDevice8* device, const RECT* source,
     }
 
     InterlockedIncrement(&g_presentCalls);
+    const LONG64 callStartTick = CounterNow();
     const HRESULT result = g_realPresent(device, source, destination, overrideWindow, dirtyRegion);
+    const LONG64 callUs = TicksToMicroseconds(CounterNow() - callStartTick);
+    InterlockedExchangeAdd64(&g_totalPresentCallUs, callUs);
+    UpdateMaximum(&g_maxPresentCallUs, callUs);
+    InterlockedIncrement(&g_presentCallSamples);
+    if (callUs >= 2000) InterlockedIncrement(&g_presentCallsOver2Ms);
+    if (callUs >= 8000) InterlockedIncrement(&g_presentCallsOver8Ms);
+    if (callUs >= 16000) InterlockedIncrement(&g_presentCallsOver16Ms);
+    if (callUs >= 33000) InterlockedIncrement(&g_presentCallsOver33Ms);
     if (FAILED(result)) InterlockedIncrement(&g_presentFailures);
     const DWORD now = GetTickCount();
     if (now - g_lastStatisticsTick >= g_statisticsIntervalMs) {
@@ -223,7 +299,7 @@ HRESULT WINAPI HookedReset(IDirect3DDevice8* device, D3DPRESENT_PARAMETERS* para
     const HRESULT result = g_realReset(device, parameters);
     if (SUCCEEDED(result)) {
         CapturePresentationParameters(parameters, "Reset");
-        InterlockedExchange64(&g_lastPresentTick, 0);
+        ResetStatisticsWindow();
     }
     return result;
 }
@@ -313,7 +389,7 @@ bool Install(const Settings& settings) {
     }
     if (g_enabled) return true;
     g_statisticsIntervalMs = settings.statisticsIntervalMs;
-    g_lastStatisticsTick = GetTickCount();
+    ResetStatisticsWindow();
     if (!QueryPerformanceFrequency(&g_counterFrequency) ||
         !HookDirect3DCreate8Import()) {
         logger::Log("ERROR", "FramePacing",
@@ -326,7 +402,10 @@ bool Install(const Settings& settings) {
 }
 
 void NotifyInputPoll(LONG64 counterTick) {
-    if (g_enabled) InterlockedExchange64(&g_lastInputPollTick, counterTick);
+    if (g_enabled) {
+        InterlockedExchange64(&g_lastInputPollTick, counterTick);
+        InterlockedIncrement(&g_inputPolls);
+    }
 }
 
 }  // namespace frame_pacing

@@ -7,6 +7,7 @@
 
 #include "game_window.h"
 #include "frame_pacing.h"
+#include "cursor_clip.h"
 #include "logger.h"
 #include "mouse_scaling_fix.h"
 
@@ -37,7 +38,10 @@ volatile LONG g_registered = 0;
 volatile LONG g_initializing = 0;
 volatile LONG g_activatedOnce = 0;
 volatile LONG g_startupLegacyFallbackLogged = 0;
-volatile LONG g_dropNextMovement = 0;
+volatile LONG g_awaitingFirstPoll = 1;
+volatile LONG g_prePollReports = 0;
+volatile LONG g_prePollX = 0;
+volatile LONG g_prePollY = 0;
 volatile LONG g_droppedPackets = 0;
 volatile LONG g_reportCount = 0;
 volatile LONG g_pollCount = 0;
@@ -151,6 +155,24 @@ void ClearInputState() {
     InterlockedExchange64(&g_newestMovementTick, 0);
 }
 
+void ResetMovementStatistics() {
+    InterlockedExchange(&g_reportCount, 0);
+    InterlockedExchange(&g_pollCount, 0);
+    InterlockedExchange(&g_intervalX, 0);
+    InterlockedExchange(&g_intervalY, 0);
+    InterlockedExchange(&g_latencySamples, 0);
+    InterlockedExchange64(&g_totalOldestAgeUs, 0);
+    InterlockedExchange64(&g_totalNewestAgeUs, 0);
+    InterlockedExchange64(&g_maxOldestAgeUs, 0);
+    InterlockedExchange(&g_maxReportsPerPoll, 0);
+    InterlockedExchange(&g_emptyPolls, 0);
+    InterlockedExchange64(&g_lastPollTick, 0);
+    InterlockedExchange64(&g_totalPollIntervalUs, 0);
+    InterlockedExchange64(&g_maxPollIntervalUs, 0);
+    InterlockedExchange(&g_pollIntervals, 0);
+    g_lastStatisticsTick = GetTickCount();
+}
+
 void SetButton(USHORT flags, USHORT downFlag, USHORT upFlag, LONG stateBit,
                UINT downMessage, UINT upMessage) {
     if ((flags & downFlag) != 0) {
@@ -241,7 +263,14 @@ void ProcessRawInput(HRAWINPUT handle) {
             InterlockedIncrement(&g_reportCount);
             const RAWMOUSE& mouse = input->data.mouse;
             if ((mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0) {
-                if (InterlockedExchange(&g_dropNextMovement, 0) == 0) {
+                if (InterlockedCompareExchange(&g_awaitingFirstPoll, 0, 0) != 0) {
+                    InterlockedIncrement(&g_prePollReports);
+                    InterlockedExchangeAdd(&g_prePollX, mouse.lLastX);
+                    InterlockedExchangeAdd(&g_prePollY, mouse.lLastY);
+                    // Menus still need a moving virtual cursor even though
+                    // these deltas must never reach the first gameplay tick.
+                    UpdateVirtualCursor(mouse.lLastX, mouse.lLastY);
+                } else {
                     const LONG64 received = CounterNow();
                     InterlockedCompareExchange64(&g_oldestMovementTick, received, 0);
                     InterlockedExchange64(&g_newestMovementTick, received);
@@ -315,7 +344,10 @@ bool ResumeInput(const char* trigger, bool clipReady) {
         return true;
     }
     ClearInputState();
-    InterlockedExchange(&g_dropNextMovement, 1);
+    InterlockedExchange(&g_awaitingFirstPoll, 1);
+    InterlockedExchange(&g_prePollReports, 0);
+    InterlockedExchange(&g_prePollX, 0);
+    InterlockedExchange(&g_prePollY, 0);
     InterlockedExchange(&g_backendState, kActive);
     const LONG activatedBefore = InterlockedExchange(&g_activatedOnce, 1);
     logger::Log("INFO", "RawInput", "resume=completed trigger=%s", trigger);
@@ -379,6 +411,20 @@ extern "C" void __cdecl RawPollMouseInput() {
 
     const LONG64 pollTick = CounterNow();
     frame_pacing::NotifyInputPoll(pollTick);
+    if (InterlockedExchange(&g_awaitingFirstPoll, 0) != 0) {
+        const LONG discardedReports = InterlockedExchange(&g_prePollReports, 0);
+        const LONG discardedX = InterlockedExchange(&g_prePollX, 0);
+        const LONG discardedY = InterlockedExchange(&g_prePollY, 0);
+        ClearInputState();
+        ResetMovementStatistics();
+        *reinterpret_cast<volatile LONG*>(kRelativeX) = 0;
+        *reinterpret_cast<volatile LONG*>(kRelativeY) = 0;
+        logger::Log("INFO", "RawInput",
+                    "first_poll_ready pre_poll_reports_discarded=%ld pre_poll_dx=%ld pre_poll_dy=%ld",
+                    discardedReports, discardedX, discardedY);
+        cursor_clip::HandleWindowChanged("first_raw_poll");
+        return;
+    }
     const LONG64 previousPoll = InterlockedExchange64(&g_lastPollTick, pollTick);
     if (previousPoll != 0) {
         const LONG64 intervalUs = TicksToMicroseconds(pollTick - previousPoll);
