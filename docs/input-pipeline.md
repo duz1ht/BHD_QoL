@@ -61,3 +61,11 @@ accumulators until its first mouse poll. Buttons, wheel events, and virtual menu
 cursor updates continue normally. That first poll returns zero movement, logs
 the discarded pre-poll totals, and immediately verifies full-client cursor
 confinement before regular accumulation begins.
+
+## Render frame limit
+
+`RenderFrameLimit` optionally paces calls to Direct3D 8 `Present` using an
+accumulated QPC deadline. Long stalls reset the deadline instead of triggering
+a burst of catch-up frames. The limiter is intentionally render-only: static
+analysis has not yet established a safe visual-camera state that can be updated
+independently from the authoritative input/simulation tick.

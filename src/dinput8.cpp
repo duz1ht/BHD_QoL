@@ -37,6 +37,8 @@ struct PatchConfig {
     bool forceDesktopResolution = true;
     bool loggingEnabled = false;
     bool framePacingDiagnostics = false;
+    unsigned int renderFrameLimit = 0;
+    bool invalidRenderFrameLimit = false;
     unsigned long rawInputStatisticsIntervalMs = 5000;
     bool invalidStatisticsInterval = false;
 };
@@ -247,6 +249,13 @@ PatchConfig LoadPatchConfig() {
     config.framePacingDiagnostics =
         GetPrivateProfileIntW(L"Logging", L"FramePacingDiagnostics",
                               config.framePacingDiagnostics ? 1 : 0, iniPath) != 0;
+    const int renderFrameLimit =
+        GetPrivateProfileIntW(L"PatchGroups", L"RenderFrameLimit", 0, iniPath);
+    config.invalidRenderFrameLimit =
+        renderFrameLimit < 0 || (renderFrameLimit > 0 && renderFrameLimit < 30) ||
+        renderFrameLimit > 1000;
+    config.renderFrameLimit = config.invalidRenderFrameLimit
+                                  ? 0 : static_cast<unsigned int>(renderFrameLimit);
     const int interval = GetPrivateProfileIntW(L"Logging", L"RawInputStatisticsIntervalMs",
                                                 config.rawInputStatisticsIntervalMs, iniPath);
     config.invalidStatisticsInterval = interval < 1000 || interval > 60000;
@@ -263,16 +272,19 @@ void ApplyBhdPatches() {
                 "AdaptiveScreenCenter=%d ScaleCursorClipToResolution=%d RawMouseInput=%d "
                 "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
                 "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
-                "FramePacingDiagnostics=%d RawInputStatisticsIntervalMs=%lu",
+                "FramePacingDiagnostics=%d RenderFrameLimit=%u RawInputStatisticsIntervalMs=%lu",
                 config.adaptiveScreenCenter, config.scaleCursorClipToResolution,
                 config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
                 config.useCorrectAspectFov, config.dpiAware,
                 config.borderlessFullscreen, config.forceDesktopResolution,
-                config.framePacingDiagnostics,
+                config.framePacingDiagnostics, config.renderFrameLimit,
                 config.rawInputStatisticsIntervalMs);
     if (config.invalidStatisticsInterval) {
         logger::Log("WARN", "Config",
                     "invalid RawInputStatisticsIntervalMs; using default 5000");
+    }
+    if (config.invalidRenderFrameLimit) {
+        logger::Log("WARN", "Config", "invalid RenderFrameLimit; feature disabled");
     }
     const uintptr_t imageBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     if (imageBase != kImageBase) {
@@ -284,7 +296,7 @@ void ApplyBhdPatches() {
                 static_cast<unsigned long>(imageBase));
     frame_pacing::Install(
         {config.framePacingDiagnostics && config.loggingEnabled,
-         config.rawInputStatisticsIntervalMs});
+         config.rawInputStatisticsIntervalMs, config.renderFrameLimit});
     mouse_scaling_fix::Install(config.mouseScalingFix);
     camera_fov::Install(config.useCorrectAspectFov);
     dpi_awareness::Initialize(config.dpiAware);

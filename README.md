@@ -31,6 +31,7 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | `DPIAware` | `1` | Prevents Windows DPI scaling from distorting window, monitor, and cursor coordinates. Recommended for borderless mode. |
 | `RawMouseInput` | `1` | Uses Windows Raw Input for more reliable relative mouse input while preserving the game's sensitivity, inversion, and bindings. |
 | `MouseScalingFix` | `1` | Preserves fractional movement for every fractional sensitivity scale, preventing small mouse movements from being rounded away in normal aim and scopes. |
+| `RenderFrameLimit` | `0` | Optional render-only cap from 30 to 1000 FPS. Zero preserves original behavior. This does not increase the authoritative mouse/camera update frequency. |
 | `AdaptiveScreenCenter` | `1` | Calculates the screen center from the current resolution instead of using fixed values. |
 | `ScaleCursorClipToResolution` | `1` | Uses the current resolution when confining the cursor instead of fixed 640x480 bounds. |
 | `RestoreCursorClip` | `1` | Restores cursor confinement after Alt+Tab, focus, resolution, display, or window changes. Works independently of `RawMouseInput`. |
@@ -53,6 +54,7 @@ UseCorrectAspectFOV=1
 DPIAware=1
 RawMouseInput=1
 MouseScalingFix=1
+RenderFrameLimit=0
 AdaptiveScreenCenter=1
 ScaleCursorClipToResolution=1
 RestoreCursorClip=1
@@ -101,6 +103,14 @@ Raw Input movement received before the first gameplay poll is intentionally
 discarded so menu/loading movement cannot produce a delayed camera jump. Mouse
 buttons, wheel events, and the virtual menu cursor remain active during that
 period. The first poll also verifies cursor confinement immediately.
+
+`RenderFrameLimit` can prevent the unlocked gameplay renderer from issuing
+hundreds of redundant Presents per second. Its high-resolution deadline is
+reset after long stalls and Direct3D device resets. When frame diagnostics are
+also enabled, `frame_limit`, `limit_wait_avg_us`, `limit_wait_max_us`, and
+`limit_misses` describe its behavior. The limiter affects rendering only and
+does not pretend to raise the game's approximately 62 Hz authoritative camera
+tick.
 
 ## Compatibility
 

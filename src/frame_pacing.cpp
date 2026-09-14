@@ -65,6 +65,10 @@ CreateDeviceFn g_realCreateDevice = nullptr;
 ResetFn g_realReset = nullptr;
 PresentFn g_realPresent = nullptr;
 bool g_enabled = false;
+bool g_diagnosticsEnabled = false;
+UINT g_renderFrameLimit = 0;
+LONG64 g_limitPeriodTicks = 0;
+alignas(8) volatile LONG64 g_nextFrameDeadline = 0;
 DWORD g_statisticsIntervalMs = 5000;
 DWORD g_lastStatisticsTick = 0;
 LARGE_INTEGER g_counterFrequency = {};
@@ -89,6 +93,10 @@ volatile LONG g_presentCallsOver8Ms = 0;
 volatile LONG g_presentCallsOver16Ms = 0;
 volatile LONG g_presentCallsOver33Ms = 0;
 volatile LONG g_stallCount = 0;
+volatile LONG g_frameLimitWaits = 0;
+volatile LONG g_frameLimitMisses = 0;
+alignas(8) volatile LONG64 g_totalFrameLimitWaitUs = 0;
+alignas(8) volatile LONG64 g_maxFrameLimitWaitUs = 0;
 alignas(8) volatile LONG64 g_maxStallUs = 0;
 alignas(8) volatile LONG64 g_statisticsWindowStartTick = 0;
 volatile LONG g_presentationInterval = D3DPRESENT_INTERVAL_DEFAULT;
@@ -139,8 +147,39 @@ void ResetStatisticsWindow() {
     InterlockedExchange(&g_presentCallsOver16Ms, 0);
     InterlockedExchange(&g_presentCallsOver33Ms, 0);
     InterlockedExchange(&g_stallCount, 0);
+    InterlockedExchange(&g_frameLimitWaits, 0);
+    InterlockedExchange(&g_frameLimitMisses, 0);
+    InterlockedExchange64(&g_totalFrameLimitWaitUs, 0);
+    InterlockedExchange64(&g_maxFrameLimitWaitUs, 0);
     InterlockedExchange64(&g_statisticsWindowStartTick, CounterNow());
     g_lastStatisticsTick = GetTickCount();
+}
+
+void ApplyFrameLimit() {
+    if (g_limitPeriodTicks <= 0) return;
+    LONG64 now = CounterNow();
+    LONG64 deadline = InterlockedCompareExchange64(&g_nextFrameDeadline, 0, 0);
+    if (deadline == 0 || now > deadline + g_limitPeriodTicks) {
+        InterlockedExchange64(&g_nextFrameDeadline, now + g_limitPeriodTicks);
+        if (deadline != 0) InterlockedIncrement(&g_frameLimitMisses);
+        return;
+    }
+
+    const LONG64 waitStart = now;
+    while (now < deadline) {
+        const LONG64 remainingUs = TicksToMicroseconds(deadline - now);
+        if (remainingUs > 2000) {
+            Sleep(static_cast<DWORD>((remainingUs - 1000) / 1000));
+        } else {
+            SwitchToThread();
+        }
+        now = CounterNow();
+    }
+    const LONG64 waitedUs = TicksToMicroseconds(now - waitStart);
+    InterlockedIncrement(&g_frameLimitWaits);
+    InterlockedExchangeAdd64(&g_totalFrameLimitWaitUs, waitedUs);
+    UpdateMaximum(&g_maxFrameLimitWaitUs, waitedUs);
+    InterlockedExchange64(&g_nextFrameDeadline, deadline + g_limitPeriodTicks);
 }
 
 const char* PresentationIntervalName(UINT interval) {
@@ -198,6 +237,10 @@ void ReportStatistics() {
     const LONG callsOver33Ms = InterlockedExchange(&g_presentCallsOver33Ms, 0);
     const LONG stalls = InterlockedExchange(&g_stallCount, 0);
     const LONG64 maxStallUs = InterlockedExchange64(&g_maxStallUs, 0);
+    const LONG limitWaits = InterlockedExchange(&g_frameLimitWaits, 0);
+    const LONG limitMisses = InterlockedExchange(&g_frameLimitMisses, 0);
+    const LONG64 totalLimitWaitUs = InterlockedExchange64(&g_totalFrameLimitWaitUs, 0);
+    const LONG64 maxLimitWaitUs = InterlockedExchange64(&g_maxFrameLimitWaitUs, 0);
     const LONG64 averageFrameUs = AverageOrZero(totalFrameUs, frameIntervals);
     const LONG64 estimatedMilliHz = averageFrameUs ? 1000000000 / averageFrameUs : 0;
     const LONG64 presentRateMilliHz = RateMilliHz(presents, actualIntervalMs);
@@ -213,6 +256,8 @@ void ReportStatistics() {
                 "poll_to_present_max_us=%lld present_call_samples=%ld present_call_avg_us=%lld "
                 "present_call_max_us=%lld present_over_2ms=%ld present_over_8ms=%ld "
                 "present_over_16ms=%ld present_over_33ms=%ld stalls=%ld stall_max_us=%lld "
+                "frame_limit=%u limit_waits=%ld limit_wait_avg_us=%lld "
+                "limit_wait_max_us=%lld limit_misses=%ld "
                 "windowed=%ld back_buffer=%ldx%ld "
                 "refresh_hz=%ld presentation_interval=%s(0x%08X)",
                 g_statisticsIntervalMs, actualIntervalMs, presents, failures, frameIntervals, averageFrameUs,
@@ -222,7 +267,8 @@ void ReportStatistics() {
                 maxPollToPresentUs, presentCallSamples,
                 presentCallSamples ? totalPresentCallUs / presentCallSamples : 0,
                 maxPresentCallUs, callsOver2Ms, callsOver8Ms, callsOver16Ms,
-                callsOver33Ms, stalls, maxStallUs,
+                callsOver33Ms, stalls, maxStallUs, g_renderFrameLimit, limitWaits,
+                AverageOrZero(totalLimitWaitUs, limitWaits), maxLimitWaitUs, limitMisses,
                 InterlockedCompareExchange(&g_windowed, 0, 0),
                 InterlockedCompareExchange(&g_backBufferWidth, 0, 0),
                 InterlockedCompareExchange(&g_backBufferHeight, 0, 0),
@@ -250,6 +296,7 @@ bool PatchPointer(void** slot, void* replacement, void** original) {
 HRESULT WINAPI HookedPresent(IDirect3DDevice8* device, const RECT* source,
                              const RECT* destination, HWND overrideWindow,
                              const RGNDATA* dirtyRegion) {
+    ApplyFrameLimit();
     const LONG64 presentTick = CounterNow();
     const LONG64 previousPresent = InterlockedExchange64(&g_lastPresentTick, presentTick);
     if (previousPresent != 0) {
@@ -288,7 +335,7 @@ HRESULT WINAPI HookedPresent(IDirect3DDevice8* device, const RECT* source,
     if (callUs >= 33000) InterlockedIncrement(&g_presentCallsOver33Ms);
     if (FAILED(result)) InterlockedIncrement(&g_presentFailures);
     const DWORD now = GetTickCount();
-    if (now - g_lastStatisticsTick >= g_statisticsIntervalMs) {
+    if (g_diagnosticsEnabled && now - g_lastStatisticsTick >= g_statisticsIntervalMs) {
         g_lastStatisticsTick = now;
         ReportStatistics();
     }
@@ -300,6 +347,7 @@ HRESULT WINAPI HookedReset(IDirect3DDevice8* device, D3DPRESENT_PARAMETERS* para
     if (SUCCEEDED(result)) {
         CapturePresentationParameters(parameters, "Reset");
         ResetStatisticsWindow();
+        InterlockedExchange64(&g_nextFrameDeadline, 0);
     }
     return result;
 }
@@ -383,26 +431,35 @@ bool HookDirect3DCreate8Import() {
 }  // namespace
 
 bool Install(const Settings& settings) {
-    if (!settings.enabled) {
+    if (!settings.diagnosticsEnabled && settings.renderFrameLimit == 0) {
         logger::Log("INFO", "FramePacing", "diagnostics disabled");
         return true;
     }
     if (g_enabled) return true;
     g_statisticsIntervalMs = settings.statisticsIntervalMs;
+    g_diagnosticsEnabled = settings.diagnosticsEnabled;
+    g_renderFrameLimit = settings.renderFrameLimit;
+    if (!QueryPerformanceFrequency(&g_counterFrequency)) {
+        logger::Log("ERROR", "FramePacing", "QueryPerformanceFrequency failed");
+        return false;
+    }
+    g_limitPeriodTicks = g_renderFrameLimit > 0
+        ? g_counterFrequency.QuadPart / g_renderFrameLimit : 0;
     ResetStatisticsWindow();
-    if (!QueryPerformanceFrequency(&g_counterFrequency) ||
-        !HookDirect3DCreate8Import()) {
+    if (!HookDirect3DCreate8Import()) {
         logger::Log("ERROR", "FramePacing",
                     "could not install Direct3DCreate8 import hook error=%lu", GetLastError());
         return false;
     }
     g_enabled = true;
-    logger::Log("INFO", "FramePacing", "Direct3DCreate8 import hook installed");
+    logger::Log("INFO", "FramePacing",
+                "Direct3DCreate8 import hook installed diagnostics=%d frame_limit=%u",
+                g_diagnosticsEnabled, g_renderFrameLimit);
     return true;
 }
 
 void NotifyInputPoll(LONG64 counterTick) {
-    if (g_enabled) {
+    if (g_enabled && g_diagnosticsEnabled) {
         InterlockedExchange64(&g_lastInputPollTick, counterTick);
         InterlockedIncrement(&g_inputPolls);
     }

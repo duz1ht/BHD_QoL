@@ -5,8 +5,9 @@
 namespace frame_pacing {
 
 struct Settings {
-    bool enabled;
+    bool diagnosticsEnabled;
     unsigned long statisticsIntervalMs;
+    unsigned int renderFrameLimit;
 };
 
 bool Install(const Settings& settings);
