@@ -78,18 +78,23 @@ analysis of the builder at `0x004181A0` establishes that source offsets
 three full-turn 32-bit angles. The builder copies these fields into the render
 camera and derives the matrices; it does not write them back to simulation.
 
-`HighFrequencyVisualCamera` hooks that already-validated builder and supplies
-a 64-byte stack copy for the main first-person call only. It interpolates from
-the previous authoritative transform to the current one over the observed
-8--33 ms update interval (falling back to 16 ms), using shortest-arc modular
-angle interpolation. Non-transform fields always come from the current source,
-and movement larger than 64 Q16 world units snaps to avoid smoothing teleports.
-The option therefore changes visual construction only, but necessarily adds up
-to one update of interpolation delay. Special camera modes and every other
-builder caller retain the original source unchanged.
+`HighFrequencyVisualCamera` now uses the scheduler remainder captured after
+fixed-step catch-up rather than estimating the update interval from QPC camera
+changes. Post-update hooks retain previous/current actor roots for known OITEM
+and MITEM producers. One scheduler-derived phase is then shared by the camera,
+primary first-person viewmodel, and supported world-actor submissions.
 
-Camera-only interpolation does not yet synchronize moving actors or the
-first-person viewmodel and can therefore produce relative shaking. The static
-findings, confirmed actor-pool layout, rejected unsafe hook candidates, and
-remaining render-boundary work are recorded in
-[`visual-interpolation-research.md`](visual-interpolation-research.md).
+The camera receives only the interpolated owner-root delta on its 64-byte stack
+copy, preserving current eye-height, bob, recoil, shake, and lean. The
+viewmodel receives the same correction after its native root matrix is built.
+World actors retain native animation and bone construction; the DLL clones a
+validated palette of 1--51 final matrices and right-multiplies each clone by
+`inverse(currentRoot) * interpolatedRoot` immediately before synchronous
+submission. No authoritative actor or global viewmodel transform is changed.
+
+Unknown producers, untracked actor categories, special camera modes,
+projectiles, temporary objects, auxiliary pools, invalid palettes, and
+submissions without a proven actor context fail closed to their native visual
+path. Unexpected transform changes and movement larger than 64 world units
+rebase the snapshots. This guarded coverage avoids making the known camera,
+viewmodel, people, and vehicle paths wait for universal object coverage.

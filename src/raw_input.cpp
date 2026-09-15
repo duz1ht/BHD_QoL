@@ -10,6 +10,7 @@
 #include "cursor_clip.h"
 #include "logger.h"
 #include "mouse_scaling_fix.h"
+#include "visual_interpolation.h"
 
 namespace raw_input {
 namespace {
@@ -492,6 +493,7 @@ extern "C" void __cdecl RawPollMouseInput() {
                     maxPollIntervalUs, g_counterFrequency.QuadPart);
         game_window::HandleStatisticsInterval();
         mouse_scaling_fix::LogStatistics();
+        visual_interpolation::LogStatistics();
     }
 }
 

@@ -28,7 +28,7 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | `BorderlessFullscreen` | `1` | Runs the game in a borderless window that covers the entire monitor. |
 | `ForceDesktopResolution` | `1` | With `BorderlessFullscreen=1`, uses the monitor resolution as the internal render resolution. At `0`, the resolution selected in the game is stretched to fill the screen. Has no effect when borderless mode is disabled. |
 | `UseCorrectAspectFOV` | `1` | Corrects the field of view for internal render resolutions wider than 4:3 without changing zoom, scopes, or special cameras. |
-| `HighFrequencyVisualCamera` | `0` | Interpolates the first-person visual camera at render frequency. It does not alter simulation/input ticks and adds up to one authoritative update (about 16 ms) of visual latency. |
+| `HighFrequencyVisualCamera` | `0` | Synchronizes render-only interpolation for the first-person camera, primary viewmodel, and guarded player/vehicle actor paths. Unknown render paths fall back to native transforms. It does not alter simulation/input ticks and adds up to one authoritative update (about 16 ms) of visual latency. |
 | `DPIAware` | `1` | Prevents Windows DPI scaling from distorting window, monitor, and cursor coordinates. Recommended for borderless mode. |
 | `RawMouseInput` | `1` | Uses Windows Raw Input for more reliable relative mouse input while preserving the game's sensitivity, inversion, and bindings. |
 | `MouseScalingFix` | `1` | Preserves fractional movement for every fractional sensitivity scale, preventing small mouse movements from being rounded away in normal aim and scopes. |
@@ -114,21 +114,23 @@ also enabled, `frame_limit`, `limit_wait_avg_us`, `limit_wait_max_us`, and
 does not pretend to raise the game's approximately 62 Hz authoritative camera
 tick.
 
-`HighFrequencyVisualCamera` smooths the main first-person camera source passed
-to the renderer. Position is interpolated linearly and the three 32-bit angle
-fields follow the shortest modular arc, including across the turn boundary.
-Only a stack copy is changed: the authoritative camera, player aim, weapon
-logic, and simulation state remain untouched. Teleports larger than 64 world
-units snap immediately. The interpolation intentionally trails the latest
-authoritative state by at most one update; leave it disabled if minimum input
-latency is more important than visual smoothness.
+`HighFrequencyVisualCamera` captures the game's native fixed-step phase and
+keeps the main first-person camera, primary viewmodel, and supported moving
+actors on one render-only timeline. Position is interpolated linearly and the
+three 32-bit angle fields follow the shortest modular arc. Camera and viewmodel
+corrections are applied to stack-local data; actor corrections are applied to
+bounded DLL-owned copies of final model palettes. Authoritative camera, actor,
+aim, weapon, collision, AI, and network state remain untouched.
 
-The current implementation does not interpolate world entities or the
-first-person viewmodel. Because those objects remain on the authoritative
-timeline while the camera trails it, enabling the option can cause visible
-relative shaking. See
-[`docs/visual-interpolation-research.md`](docs/visual-interpolation-research.md)
-for the verified executable layout and the remaining safe-hook requirements.
+The synchronized path is deliberately fail-closed. It currently covers known
+OITEM player/organic-actor and MITEM vehicle paths. Unknown producers,
+projectiles, temporary objects, auxiliary pools, special camera modes, invalid
+matrix counts, and submissions without a proven actor context retain native
+transforms. Teleports and unexpected authoritative changes rebase instead of
+being smoothed. The interpolation trails the latest authoritative state by up
+to one update; leave it disabled if minimum input latency is more important
+than visual smoothness. With Raw Input statistics and logging enabled,
+`VisualInterpolation.Stats` reports guarded corrections and native fallbacks.
 
 ## Compatibility
 

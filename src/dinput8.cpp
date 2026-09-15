@@ -13,6 +13,7 @@
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
 #include "camera_fov.h"
+#include "visual_interpolation.h"
 
 namespace {
 constexpr uintptr_t kImageBase = 0x400000;
@@ -301,6 +302,7 @@ void ApplyBhdPatches() {
         {config.framePacingDiagnostics && config.loggingEnabled,
          config.rawInputStatisticsIntervalMs, config.renderFrameLimit});
     mouse_scaling_fix::Install(config.mouseScalingFix);
+    visual_interpolation::Install(config.highFrequencyVisualCamera);
     camera_fov::Install(config.useCorrectAspectFov, config.highFrequencyVisualCamera);
     dpi_awareness::Initialize(config.dpiAware);
     if (config.borderlessFullscreen && !config.dpiAware) {

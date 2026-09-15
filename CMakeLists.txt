@@ -5,6 +5,7 @@ add_library(dinput8 SHARED src/dinput8.cpp src/logger.cpp src/game_window.cpp
     src/cursor_clip.cpp src/cursor_visibility.cpp src/dpi_awareness.cpp src/frame_pacing.cpp
     src/borderless_fullscreen.cpp src/borderless_gamma.cpp
     src/raw_input.cpp src/mouse_scaling_fix.cpp src/mouse_scaling_math.cpp src/camera_fov.cpp src/camera_fov_math.cpp
+    src/visual_interpolation.cpp
     src/dinput8.def)
 target_compile_features(dinput8 PRIVATE cxx_std_17)
 
@@ -46,4 +47,9 @@ if(BUILD_TESTING)
     target_include_directories(visual_camera_math_test PRIVATE src)
     target_compile_features(visual_camera_math_test PRIVATE cxx_std_17)
     add_test(NAME visual_camera_math COMMAND visual_camera_math_test)
+
+    add_executable(visual_interpolation_math_test tests/visual_interpolation_math_test.cpp)
+    target_include_directories(visual_interpolation_math_test PRIVATE src)
+    target_compile_features(visual_interpolation_math_test PRIVATE cxx_std_17)
+    add_test(NAME visual_interpolation_math COMMAND visual_interpolation_math_test)
 endif()
