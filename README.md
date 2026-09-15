@@ -131,6 +131,10 @@ being smoothed. The interpolation trails the latest authoritative state by up
 to one update; leave it disabled if minimum input latency is more important
 than visual smoothness. With Raw Input statistics and logging enabled,
 `VisualInterpolation.Stats` reports guarded corrections and native fallbacks.
+See the
+[`high-frequency visual camera implementation guide`](docs/high-frequency-visual-camera-implementation-guide.md)
+for the reusable architecture, target-specific hook map, safety rules, and
+recommended porting sequence.
 
 ## Compatibility
 
