@@ -14,6 +14,7 @@
 #endif
 
 #include "logger.h"
+#include "visual_interpolation.h"
 
 namespace camera_fov {
 namespace {
@@ -39,6 +40,7 @@ using BuildCameraFn = void(__cdecl *)(void *, void *);
 BuildCameraFn g_originalBuildCamera = nullptr;
 uintptr_t g_moduleBase = 0;
 bool g_installed = false;
+bool g_fovEnabled = false;
 LONG g_cachedWidth = -1;
 LONG g_cachedHeight = -1;
 int32_t g_cachedFirstPersonFov = kVanillaFovQ16;
@@ -97,8 +99,10 @@ void __cdecl HookBuildCamera(void *destinationCamera, void *sourceCamera) {
     const auto *cameraMode =
         reinterpret_cast<const volatile int32_t *>(g_moduleBase + kCameraModeRva);
 
+    const bool primaryCallsite = caller == g_moduleBase + kMainRendererReturnRva;
+    if (primaryCallsite) visual_interpolation::BeginVisualFrame();
     const bool overrideFov =
-        caller == g_moduleBase + kMainRendererReturnRva && cameraFov != nullptr &&
+        g_fovEnabled && primaryCallsite && cameraFov != nullptr &&
         *cameraMode == 0 &&
         *currentFov == kVanillaFovQ16 && *targetFov == kVanillaFovQ16 &&
         *cameraFov == kVanillaFovQ16;
@@ -151,11 +155,13 @@ bool InstallHook(unsigned char *hook) {
 }
 } // namespace
 
-bool Install(bool enabled) {
-    if (!enabled) {
+bool Install(bool enabled, bool visualFrameDiagnostics) {
+    g_fovEnabled = enabled;
+    if (!enabled && !visualFrameDiagnostics) {
         logger::Log("INFO", "UseCorrectAspectFOV", "feature disabled");
         return false;
     }
+    if (!enabled) logger::Log("INFO", "UseCorrectAspectFOV", "feature disabled; camera hook retained for visual diagnostics");
     if (g_installed) {
         logger::Log("INFO", "UseCorrectAspectFOV", "hook already installed");
         return true;

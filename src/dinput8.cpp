@@ -12,6 +12,7 @@
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
 #include "camera_fov.h"
+#include "visual_interpolation.h"
 
 namespace {
 constexpr uintptr_t kImageBase = 0x400000;
@@ -31,6 +32,7 @@ struct PatchConfig {
     bool restoreCursorClip = true;
     bool mouseScalingFix = true;
     bool useCorrectAspectFov = true;
+    bool visualMouseLateLatching = false;
     bool dpiAware = true;
     bool borderlessFullscreen = true;
     bool forceDesktopResolution = true;
@@ -235,6 +237,8 @@ PatchConfig LoadPatchConfig() {
     config.mouseScalingFix = BoolFromIni(iniPath, L"MouseScalingFix", config.mouseScalingFix);
     config.useCorrectAspectFov =
         BoolFromIni(iniPath, L"UseCorrectAspectFOV", config.useCorrectAspectFov);
+    config.visualMouseLateLatching = BoolFromIni(
+        iniPath, L"VisualMouseLateLatching", config.visualMouseLateLatching);
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
     config.borderlessFullscreen =
         BoolFromIni(iniPath, L"BorderlessFullscreen", config.borderlessFullscreen);
@@ -256,12 +260,12 @@ void ApplyBhdPatches() {
     logger::Initialize(config.loggingEnabled);
     logger::Log("INFO", "Config",
                 "AdaptiveScreenCenter=%d ScaleCursorClipToResolution=%d RawMouseInput=%d "
-                "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
+                "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d VisualMouseLateLatching=%d "
                 "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.adaptiveScreenCenter, config.scaleCursorClipToResolution,
                 config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
-                config.useCorrectAspectFov, config.dpiAware,
+                config.useCorrectAspectFov, config.visualMouseLateLatching, config.dpiAware,
                 config.borderlessFullscreen, config.forceDesktopResolution,
                 config.rawInputStatisticsIntervalMs);
     if (config.invalidStatisticsInterval) {
@@ -277,7 +281,8 @@ void ApplyBhdPatches() {
     logger::Log("INFO", "Executable", "image base validated: 0x%08lX",
                 static_cast<unsigned long>(imageBase));
     mouse_scaling_fix::Install(config.mouseScalingFix);
-    camera_fov::Install(config.useCorrectAspectFov);
+    visual_interpolation::Install(config.visualMouseLateLatching && config.rawMouseInput);
+    camera_fov::Install(config.useCorrectAspectFov, config.visualMouseLateLatching);
     dpi_awareness::Initialize(config.dpiAware);
     if (config.borderlessFullscreen && !config.dpiAware) {
         logger::Log("WARN", "BorderlessFullscreen",
@@ -307,6 +312,8 @@ void ApplyBhdPatches() {
     }
     const bool rawInstalled =
         raw_input::Install({config.rawMouseInput, config.rawInputStatisticsIntervalMs});
+    if (config.visualMouseLateLatching && !rawInstalled)
+        visual_interpolation::Install(false);
     game_window::Configure(
         {config.rawMouseInput && rawInstalled, config.restoreCursorClip,
          config.borderlessFullscreen && borderlessInitialized,

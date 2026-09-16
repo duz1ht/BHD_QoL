@@ -27,6 +27,18 @@ using PollMouseInputFn = void(__cdecl*)();
 using MouseDispatcherFn = void(__cdecl*)(WPARAM, LPARAM, UINT, int);
 
 volatile LONG g_accumX = 0;
+// The renderer only reads these counters.  g_accumX/Y remain exclusively owned
+// by RawPollMouseInput and are never drained by the visual path.
+SRWLOCK g_movementLock = SRWLOCK_INIT;
+int64_t g_capturedX = 0;
+int64_t g_capturedY = 0;
+int64_t g_consumedX = 0;
+int64_t g_consumedY = 0;
+uint64_t g_captureSequence = 0;
+uint64_t g_consumedSequence = 0;
+uint64_t g_focusGeneration = 0;
+uint64_t g_latestReportTimestamp = 0;
+bool g_visualCountersValid = false;
 volatile LONG g_accumY = 0;
 volatile LONG g_buttonState = 0;
 enum BackendState : LONG { kInactive = 0, kRecoveryPending = 1, kActive = 2 };
@@ -96,8 +108,16 @@ void DispatchEvent(UINT message, WPARAM state, LPARAM position) {
 }
 
 void ClearInputState() {
+    AcquireSRWLockExclusive(&g_movementLock);
     InterlockedExchange(&g_accumX, 0);
     InterlockedExchange(&g_accumY, 0);
+    g_capturedX = g_capturedY = 0;
+    g_consumedX = g_consumedY = 0;
+    g_captureSequence = g_consumedSequence = 0;
+    g_latestReportTimestamp = 0;
+    ++g_focusGeneration;
+    g_visualCountersValid = false;
+    ReleaseSRWLockExclusive(&g_movementLock);
     InterlockedExchange(&g_buttonState, 0);
 }
 
@@ -192,8 +212,14 @@ void ProcessRawInput(HRAWINPUT handle) {
             const RAWMOUSE& mouse = input->data.mouse;
             if ((mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0) {
                 if (InterlockedExchange(&g_dropNextMovement, 0) == 0) {
+                    AcquireSRWLockExclusive(&g_movementLock);
                     InterlockedExchangeAdd(&g_accumX, mouse.lLastX);
                     InterlockedExchangeAdd(&g_accumY, mouse.lLastY);
+                    g_capturedX += mouse.lLastX;
+                    g_capturedY += mouse.lLastY;
+                    ++g_captureSequence;
+                    g_latestReportTimestamp = GetTickCount64();
+                    ReleaseSRWLockExclusive(&g_movementLock);
                     UpdateVirtualCursor(mouse.lLastX, mouse.lLastY);
                 }
             } else {
@@ -324,8 +350,14 @@ extern "C" void __cdecl RawPollMouseInput() {
     }
 
     *reinterpret_cast<volatile LONG*>(kMouseState) = static_cast<LONG>(CurrentState());
+    AcquireSRWLockExclusive(&g_movementLock);
     const LONG x = InterlockedExchange(&g_accumX, 0);
     const LONG y = InterlockedExchange(&g_accumY, 0);
+    g_consumedX += x;
+    g_consumedY += y;
+    ++g_consumedSequence;
+    g_visualCountersValid = true;  // First gameplay poll establishes the baseline.
+    ReleaseSRWLockExclusive(&g_movementLock);
     InterlockedExchangeAdd(&g_intervalX, x);
     InterlockedExchangeAdd(&g_intervalY, y);
     *reinterpret_cast<volatile LONG*>(kRelativeX) = x;
@@ -408,7 +440,10 @@ bool Install(const Settings& settings) {
     return true;
 }
 
-bool AttachWindow(HWND window) { return RegisterForWindow(window); }
+bool AttachWindow(HWND window) {
+    if (window != g_window) ClearInputState();
+    return RegisterForWindow(window);
+}
 void HandleRawInput(HRAWINPUT input) { ProcessRawInput(input); }
 void HandleFocusLost() {
     if (!g_enabled) return;
@@ -425,4 +460,17 @@ void HandleDestroy() {
     g_window = nullptr;
 }
 bool IsEnabled() { return g_enabled; }
+PendingVisualMouse GetPendingVisualMouse() {
+    PendingVisualMouse result = {};
+    AcquireSRWLockShared(&g_movementLock);
+    result.x = g_capturedX - g_consumedX;
+    result.y = g_capturedY - g_consumedY;
+    result.captureSequence = g_captureSequence;
+    result.consumedSequence = g_consumedSequence;
+    result.valid = g_enabled && g_visualCountersValid &&
+        InterlockedCompareExchange(&g_backendState, kInactive, kInactive) == kActive &&
+        WindowHasInputFocus();
+    ReleaseSRWLockShared(&g_movementLock);
+    return result;
+}
 }  // namespace raw_input

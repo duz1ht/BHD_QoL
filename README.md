@@ -30,6 +30,7 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | `UseCorrectAspectFOV` | `1` | Corrects the field of view for internal render resolutions wider than 4:3 without changing zoom, scopes, or special cameras. |
 | `DPIAware` | `1` | Prevents Windows DPI scaling from distorting window, monitor, and cursor coordinates. Recommended for borderless mode. |
 | `RawMouseInput` | `1` | Uses Windows Raw Input for more reliable relative mouse input while preserving the game's sensitivity, inversion, and bindings. |
+| `VisualMouseLateLatching` | `0` | Enables fail-closed capture/render sequence diagnostics. Visual correction is not applied until the authoritative producer boundary is proven at runtime. |
 | `MouseScalingFix` | `1` | Fixes rounding of small mouse movements, especially noticeable when using scoped weapons. |
 | `AdaptiveScreenCenter` | `1` | Calculates the screen center from the current resolution instead of using fixed values. |
 | `ScaleCursorClipToResolution` | `1` | Uses the current resolution when confining the cursor instead of fixed 640x480 bounds. |
@@ -51,6 +52,7 @@ ForceDesktopResolution=1
 UseCorrectAspectFOV=1
 DPIAware=1
 RawMouseInput=1
+VisualMouseLateLatching=0
 MouseScalingFix=1
 AdaptiveScreenCenter=1
 ScaleCursorClipToResolution=1
@@ -60,6 +62,12 @@ RestoreCursorClip=1
 Enabled=0
 RawInputStatisticsIntervalMs=5000
 ```
+
+## Visual mouse latency diagnostics
+
+The optional `VisualMouseLateLatching` rollout is separate from camera/FOV features and is disabled by default. At present, setting it to `1` records captured, pending, consumed, rebase, and bypass sequence diagnostics while deliberately leaving the native camera and viewmodel unchanged. See [`docs/input-pipeline.md`](docs/input-pipeline.md) for the proven input path and validation plan.
+
+A future validated render-only correction can make the displayed camera and viewmodel follow render rate, but gameplay, firing, hit detection, and networking remain authoritative at approximately 62.5 Hz. A temporary displayed-aim/authoritative-direction difference is therefore possible. The feature reduces perceived visual latency; it does not increase the simulation tick, and every unproven prerequisite falls back to native behavior.
 
 ## Building
 
