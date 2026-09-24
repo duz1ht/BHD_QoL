@@ -28,6 +28,10 @@ using MouseDispatcherFn = void(__cdecl*)(WPARAM, LPARAM, UINT, int);
 
 volatile LONG g_accumX = 0;
 volatile LONG g_accumY = 0;
+volatile LONG g_totalRawX = 0;
+volatile LONG g_totalRawY = 0;
+volatile LONG g_committedRawX = 0;
+volatile LONG g_committedRawY = 0;
 volatile LONG g_buttonState = 0;
 enum BackendState : LONG { kInactive = 0, kRecoveryPending = 1, kActive = 2 };
 volatile LONG g_backendState = kInactive;
@@ -99,6 +103,7 @@ void ClearInputState() {
     InterlockedExchange(&g_accumX, 0);
     InterlockedExchange(&g_accumY, 0);
     InterlockedExchange(&g_buttonState, 0);
+    ResetPrediction();
 }
 
 void SetButton(USHORT flags, USHORT downFlag, USHORT upFlag, LONG stateBit,
@@ -194,6 +199,8 @@ void ProcessRawInput(HRAWINPUT handle) {
                 if (InterlockedExchange(&g_dropNextMovement, 0) == 0) {
                     InterlockedExchangeAdd(&g_accumX, mouse.lLastX);
                     InterlockedExchangeAdd(&g_accumY, mouse.lLastY);
+                    InterlockedExchangeAdd(&g_totalRawX, mouse.lLastX);
+                    InterlockedExchangeAdd(&g_totalRawY, mouse.lLastY);
                     UpdateVirtualCursor(mouse.lLastX, mouse.lLastY);
                 }
             } else {
@@ -326,6 +333,8 @@ extern "C" void __cdecl RawPollMouseInput() {
     *reinterpret_cast<volatile LONG*>(kMouseState) = static_cast<LONG>(CurrentState());
     const LONG x = InterlockedExchange(&g_accumX, 0);
     const LONG y = InterlockedExchange(&g_accumY, 0);
+    InterlockedExchangeAdd(&g_committedRawX, x);
+    InterlockedExchangeAdd(&g_committedRawY, y);
     InterlockedExchangeAdd(&g_intervalX, x);
     InterlockedExchangeAdd(&g_intervalY, y);
     *reinterpret_cast<volatile LONG*>(kRelativeX) = x;
@@ -425,4 +434,16 @@ void HandleDestroy() {
     g_window = nullptr;
 }
 bool IsEnabled() { return g_enabled; }
+PredictionSnapshot GetPredictionSnapshot() {
+    return {InterlockedCompareExchange(&g_totalRawX, 0, 0),
+            InterlockedCompareExchange(&g_totalRawY, 0, 0),
+            InterlockedCompareExchange(&g_committedRawX, 0, 0),
+            InterlockedCompareExchange(&g_committedRawY, 0, 0)};
+}
+void ResetPrediction() {
+    InterlockedExchange(&g_totalRawX, 0);
+    InterlockedExchange(&g_totalRawY, 0);
+    InterlockedExchange(&g_committedRawX, 0);
+    InterlockedExchange(&g_committedRawY, 0);
+}
 }  // namespace raw_input

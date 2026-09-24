@@ -12,6 +12,7 @@
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
 #include "camera_fov.h"
+#include "high_rate_camera.h"
 
 namespace {
 constexpr uintptr_t kImageBase = 0x400000;
@@ -31,6 +32,7 @@ struct PatchConfig {
     bool restoreCursorClip = true;
     bool mouseScalingFix = true;
     bool useCorrectAspectFov = true;
+    bool highRateCamera = true;
     bool dpiAware = true;
     bool borderlessFullscreen = true;
     bool forceDesktopResolution = true;
@@ -235,6 +237,7 @@ PatchConfig LoadPatchConfig() {
     config.mouseScalingFix = BoolFromIni(iniPath, L"MouseScalingFix", config.mouseScalingFix);
     config.useCorrectAspectFov =
         BoolFromIni(iniPath, L"UseCorrectAspectFOV", config.useCorrectAspectFov);
+    config.highRateCamera = BoolFromIni(iniPath, L"HighRateCamera", config.highRateCamera);
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
     config.borderlessFullscreen =
         BoolFromIni(iniPath, L"BorderlessFullscreen", config.borderlessFullscreen);
@@ -256,12 +259,12 @@ void ApplyBhdPatches() {
     logger::Initialize(config.loggingEnabled);
     logger::Log("INFO", "Config",
                 "AdaptiveScreenCenter=%d ScaleCursorClipToResolution=%d RawMouseInput=%d "
-                "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
+                "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d HighRateCamera=%d "
                 "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.adaptiveScreenCenter, config.scaleCursorClipToResolution,
                 config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
-                config.useCorrectAspectFov, config.dpiAware,
+                config.useCorrectAspectFov, config.highRateCamera, config.dpiAware,
                 config.borderlessFullscreen, config.forceDesktopResolution,
                 config.rawInputStatisticsIntervalMs);
     if (config.invalidStatisticsInterval) {
@@ -307,6 +310,7 @@ void ApplyBhdPatches() {
     }
     const bool rawInstalled =
         raw_input::Install({config.rawMouseInput, config.rawInputStatisticsIntervalMs});
+    high_rate_camera::Install(config.highRateCamera, config.rawMouseInput && rawInstalled);
     game_window::Configure(
         {config.rawMouseInput && rawInstalled, config.restoreCursorClip,
          config.borderlessFullscreen && borderlessInitialized,
