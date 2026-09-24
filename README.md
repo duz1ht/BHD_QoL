@@ -35,6 +35,16 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | `ScaleCursorClipToResolution` | `1` | Uses the current resolution when confining the cursor instead of fixed 640x480 bounds. |
 | `RestoreCursorClip` | `1` | Restores cursor confinement after Alt+Tab, focus, resolution, display, or window changes. Works independently of `RawMouseInput`. |
 
+### `[Presentation]`
+
+| Option | Default | Description |
+| --- | :---: | --- |
+| `Enabled` | `1` | Captures authoritative game-tick snapshots and maintains a separate render-only Presentation State. Requires `RawMouseInput=1`. |
+| `CameraPresentation` | `1` | Allows Presentation State to replace only the final camera yaw/pitch, preserving the game's position, roll, bob, shake, and simulation state. |
+| `RenderRateMouse` | `1` | Applies mouse movement received after the latest simulation tick on every rendered frame. It never writes predicted angles into gameplay state. |
+
+The presentation camera learns the game's effective mouse-to-angle scale from authoritative ticks, so existing sensitivity and inversion behavior remain the source of truth. It rebases after focus/input transitions and leaves the legacy simulation cadence unchanged.
+
 ### `[Logging]`
 
 | Option | Default | Description |
@@ -55,6 +65,11 @@ MouseScalingFix=1
 AdaptiveScreenCenter=1
 ScaleCursorClipToResolution=1
 RestoreCursorClip=1
+
+[Presentation]
+Enabled=1
+CameraPresentation=1
+RenderRateMouse=1
 
 [Logging]
 Enabled=0

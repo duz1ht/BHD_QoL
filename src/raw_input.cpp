@@ -28,6 +28,11 @@ using MouseDispatcherFn = void(__cdecl*)(WPARAM, LPARAM, UINT, int);
 
 volatile LONG g_accumX = 0;
 volatile LONG g_accumY = 0;
+// Monotonic (modulo 2^32) counters.  Unlike g_accum*, these are not consumed by
+// the simulation poll, so the presentation renderer can have its own cursor.
+volatile LONG g_totalX = 0;
+volatile LONG g_totalY = 0;
+volatile LONG g_inputEpoch = 0;
 volatile LONG g_buttonState = 0;
 enum BackendState : LONG { kInactive = 0, kRecoveryPending = 1, kActive = 2 };
 volatile LONG g_backendState = kInactive;
@@ -194,6 +199,8 @@ void ProcessRawInput(HRAWINPUT handle) {
                 if (InterlockedExchange(&g_dropNextMovement, 0) == 0) {
                     InterlockedExchangeAdd(&g_accumX, mouse.lLastX);
                     InterlockedExchangeAdd(&g_accumY, mouse.lLastY);
+                    InterlockedExchangeAdd(&g_totalX, mouse.lLastX);
+                    InterlockedExchangeAdd(&g_totalY, mouse.lLastY);
                     UpdateVirtualCursor(mouse.lLastX, mouse.lLastY);
                 }
             } else {
@@ -227,6 +234,7 @@ void ProcessRawInput(HRAWINPUT handle) {
 void SuspendInput() {
     if (InterlockedExchange(&g_backendState, kInactive) == kInactive) return;
     ClearInputState();
+    InterlockedIncrement(&g_inputEpoch);
     logger::Log("INFO", "RawInput", "input suspended and transient state cleared");
 }
 
@@ -425,4 +433,14 @@ void HandleDestroy() {
     g_window = nullptr;
 }
 bool IsEnabled() { return g_enabled; }
+MovementSnapshot GetMovementSnapshot() {
+    MovementSnapshot snapshot = {};
+    snapshot.x = InterlockedCompareExchange(&g_totalX, 0, 0);
+    snapshot.y = InterlockedCompareExchange(&g_totalY, 0, 0);
+    snapshot.epoch = static_cast<unsigned long>(
+        InterlockedCompareExchange(&g_inputEpoch, 0, 0));
+    snapshot.active = g_enabled &&
+        InterlockedCompareExchange(&g_backendState, kInactive, kInactive) == kActive;
+    return snapshot;
+}
 }  // namespace raw_input

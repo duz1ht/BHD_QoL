@@ -5,6 +5,7 @@ add_library(dinput8 SHARED src/dinput8.cpp src/logger.cpp src/game_window.cpp
     src/cursor_clip.cpp src/cursor_visibility.cpp src/dpi_awareness.cpp
     src/borderless_fullscreen.cpp src/borderless_gamma.cpp
     src/raw_input.cpp src/mouse_scaling_fix.cpp src/camera_fov.cpp src/camera_fov_math.cpp
+    src/presentation_state.cpp
     src/dinput8.def)
 target_compile_features(dinput8 PRIVATE cxx_std_17)
 
@@ -31,4 +32,9 @@ if(BUILD_TESTING)
     target_include_directories(cursor_clip_math_test PRIVATE src)
     target_compile_features(cursor_clip_math_test PRIVATE cxx_std_17)
     add_test(NAME cursor_clip_math COMMAND cursor_clip_math_test)
+
+    add_executable(presentation_math_test tests/presentation_math_test.cpp)
+    target_include_directories(presentation_math_test PRIVATE src)
+    target_compile_features(presentation_math_test PRIVATE cxx_std_17)
+    add_test(NAME presentation_math COMMAND presentation_math_test)
 endif()

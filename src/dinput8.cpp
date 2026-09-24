@@ -12,6 +12,7 @@
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
 #include "camera_fov.h"
+#include "presentation_state.h"
 
 namespace {
 constexpr uintptr_t kImageBase = 0x400000;
@@ -34,6 +35,9 @@ struct PatchConfig {
     bool dpiAware = true;
     bool borderlessFullscreen = true;
     bool forceDesktopResolution = true;
+    bool presentationState = true;
+    bool cameraPresentation = true;
+    bool renderRateMouse = true;
     bool loggingEnabled = false;
     unsigned long rawInputStatisticsIntervalMs = 5000;
     bool invalidStatisticsInterval = false;
@@ -240,6 +244,12 @@ PatchConfig LoadPatchConfig() {
         BoolFromIni(iniPath, L"BorderlessFullscreen", config.borderlessFullscreen);
     config.forceDesktopResolution =
         BoolFromIni(iniPath, L"ForceDesktopResolution", config.forceDesktopResolution);
+    config.presentationState = GetPrivateProfileIntW(
+        L"Presentation", L"Enabled", config.presentationState ? 1 : 0, iniPath) != 0;
+    config.cameraPresentation = GetPrivateProfileIntW(
+        L"Presentation", L"CameraPresentation", config.cameraPresentation ? 1 : 0, iniPath) != 0;
+    config.renderRateMouse = GetPrivateProfileIntW(
+        L"Presentation", L"RenderRateMouse", config.renderRateMouse ? 1 : 0, iniPath) != 0;
     config.loggingEnabled =
         GetPrivateProfileIntW(L"Logging", L"Enabled", config.loggingEnabled ? 1 : 0, iniPath) != 0;
     const int interval = GetPrivateProfileIntW(L"Logging", L"RawInputStatisticsIntervalMs",
@@ -264,6 +274,9 @@ void ApplyBhdPatches() {
                 config.useCorrectAspectFov, config.dpiAware,
                 config.borderlessFullscreen, config.forceDesktopResolution,
                 config.rawInputStatisticsIntervalMs);
+    logger::Log("INFO", "Config",
+                "Presentation.Enabled=%d CameraPresentation=%d RenderRateMouse=%d",
+                config.presentationState, config.cameraPresentation, config.renderRateMouse);
     if (config.invalidStatisticsInterval) {
         logger::Log("WARN", "Config",
                     "invalid RawInputStatisticsIntervalMs; using default 5000");
@@ -307,6 +320,9 @@ void ApplyBhdPatches() {
     }
     const bool rawInstalled =
         raw_input::Install({config.rawMouseInput, config.rawInputStatisticsIntervalMs});
+    presentation_state::Install(
+        {config.presentationState && config.rawMouseInput && rawInstalled,
+         config.cameraPresentation, config.renderRateMouse});
     game_window::Configure(
         {config.rawMouseInput && rawInstalled, config.restoreCursorClip,
          config.borderlessFullscreen && borderlessInitialized,
