@@ -11,6 +11,7 @@
 #include "game_window.h"
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
+#include "high_rate_camera.h"
 #include "camera_fov.h"
 
 namespace {
@@ -30,6 +31,7 @@ struct PatchConfig {
     bool rawMouseInput = true;
     bool restoreCursorClip = true;
     bool mouseScalingFix = true;
+    bool highRateCamera = true;
     bool useCorrectAspectFov = true;
     bool dpiAware = true;
     bool borderlessFullscreen = true;
@@ -233,6 +235,7 @@ PatchConfig LoadPatchConfig() {
     config.restoreCursorClip =
         BoolFromIni(iniPath, L"RestoreCursorClip", config.restoreCursorClip);
     config.mouseScalingFix = BoolFromIni(iniPath, L"MouseScalingFix", config.mouseScalingFix);
+    config.highRateCamera = BoolFromIni(iniPath, L"HighRateCamera", config.highRateCamera);
     config.useCorrectAspectFov =
         BoolFromIni(iniPath, L"UseCorrectAspectFOV", config.useCorrectAspectFov);
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
@@ -256,11 +259,12 @@ void ApplyBhdPatches() {
     logger::Initialize(config.loggingEnabled);
     logger::Log("INFO", "Config",
                 "AdaptiveScreenCenter=%d ScaleCursorClipToResolution=%d RawMouseInput=%d "
-                "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
+                "RestoreCursorClip=%d MouseScalingFix=%d HighRateCamera=%d UseCorrectAspectFOV=%d "
                 "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.adaptiveScreenCenter, config.scaleCursorClipToResolution,
                 config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
+                config.highRateCamera,
                 config.useCorrectAspectFov, config.dpiAware,
                 config.borderlessFullscreen, config.forceDesktopResolution,
                 config.rawInputStatisticsIntervalMs);
@@ -307,6 +311,9 @@ void ApplyBhdPatches() {
     }
     const bool rawInstalled =
         raw_input::Install({config.rawMouseInput, config.rawInputStatisticsIntervalMs});
+    high_rate_camera::Install(
+        {config.highRateCamera && config.rawMouseInput && rawInstalled,
+         config.rawInputStatisticsIntervalMs});
     game_window::Configure(
         {config.rawMouseInput && rawInstalled, config.restoreCursorClip,
          config.borderlessFullscreen && borderlessInitialized,
