@@ -31,10 +31,18 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | `DPIAware` | `1` | Prevents Windows DPI scaling from distorting window, monitor, and cursor coordinates. Recommended for borderless mode. |
 | `RawMouseInput` | `1` | Uses Windows Raw Input for more reliable relative mouse input while preserving the game's sensitivity, inversion, and bindings. |
 | `FreeRateMousePoll` | `1` | Samples a separate Raw Input stream once per rendered camera frame without consuming movement from the authoritative logic stream. Requires `RawMouseInput`. |
+| `HighRateCameraRotation` | `1` | Maintains render-only first-person yaw and pitch from newly arrived Raw Input without reproducing the legacy persistent yaw filter. Requires `FreeRateMousePoll`. |
 | `MouseScalingFix` | `1` | Fixes rounding of small mouse movements, especially noticeable when using scoped weapons. |
 | `AdaptiveScreenCenter` | `1` | Calculates the screen center from the current resolution instead of using fixed values. |
 | `ScaleCursorClipToResolution` | `1` | Uses the current resolution when confining the cursor instead of fixed 640x480 bounds. |
 | `RestoreCursorClip` | `1` | Restores cursor confinement after Alt+Tab, focus, resolution, display, or window changes. Works independently of `RawMouseInput`. |
+
+`HighRateCameraRotation` is deliberately limited to the normal local-player,
+on-foot first-person camera. It keeps its yaw and pitch exclusively in the
+presentation layer, consumes each accepted Raw Input count once, and rebases
+after focus, ownership, camera-mode, pause, or mount transitions. Unsupported
+camera states retain the native result. The authoritative player orientation
+and the original 62.5 Hz yaw filter are not patched.
 
 ### `[Logging]`
 
@@ -53,6 +61,7 @@ UseCorrectAspectFOV=1
 DPIAware=1
 RawMouseInput=1
 FreeRateMousePoll=1
+HighRateCameraRotation=1
 MouseScalingFix=1
 AdaptiveScreenCenter=1
 ScaleCursorClipToResolution=1

@@ -28,6 +28,14 @@ uint32_t LerpAngle(uint32_t from, uint32_t to, uint32_t alphaQ16) {
     return from + static_cast<uint32_t>(shortest * std::min(alphaQ16, kAlphaOne) / kAlphaOne);
 }
 
+int32_t NewCumulativeCounts(uint32_t total, uint32_t alreadyVisualized) {
+    return static_cast<int32_t>(total - alreadyVisualized);
+}
+
+int32_t UnfilteredYawStep(int32_t yawAction) {
+    return static_cast<int32_t>(static_cast<int64_t>(yawAction) * 3072 / 4);
+}
+
 TransformQ16 Interpolate(const TransformQ16& a, const TransformQ16& b, uint32_t alpha) {
     return {LerpQ16(a.x, b.x, alpha), LerpQ16(a.y, b.y, alpha), LerpQ16(a.z, b.z, alpha),
             LerpAngle(a.yaw, b.yaw, alpha), LerpAngle(a.pitch, b.pitch, alpha),

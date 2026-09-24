@@ -26,6 +26,13 @@ int main() {
     assert(LerpAngle(123u, 456u, 0) == 123u);
     assert(LerpAngle(123u, 456u, kAlphaOne) == 456u);
 
+    assert(NewCumulativeCounts(105, 100) == 5);
+    assert(NewCumulativeCounts(2, 0xfffffffeu) == 4);
+    assert(UnfilteredYawStep(8) == 6144);
+    assert(UnfilteredYawStep(-8) == -6144);
+    // The visual path has no persistent yaw-filter decay after a sudden stop.
+    assert(UnfilteredYawStep(0) == 0);
+
     TransformQ16 a = {0, 10, -20, 0xfffffff0u, 0, 100};
     TransformQ16 b = {65536, 20, 20, 0x10u, 200, 300};
     const TransformQ16 middle = Interpolate(a, b, 32768);

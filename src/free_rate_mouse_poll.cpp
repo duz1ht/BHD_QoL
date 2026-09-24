@@ -7,6 +7,7 @@
 #include <limits>
 
 #include "logger.h"
+#include "high_rate_camera_rotation.h"
 #include "raw_input.h"
 
 namespace free_rate_mouse_poll {
@@ -19,7 +20,9 @@ bool g_installed = false;
 
 extern "C" int __cdecl CalculateCameraPositionsRenderWrapper() {
     raw_input::PollForRenderFrame();
-    return reinterpret_cast<CalculateCameraPositionsFn>(kCalculateCameraPositions)();
+    const int result = reinterpret_cast<CalculateCameraPositionsFn>(kCalculateCameraPositions)();
+    high_rate_camera_rotation::EvaluateAndApplyForCurrentFrame();
+    return result;
 }
 
 bool WriteCall() {

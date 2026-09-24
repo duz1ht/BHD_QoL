@@ -25,12 +25,6 @@ const unsigned char kScaleBlockSignature[] = {
     0x0F, 0xAC, 0xD0, 0x10, // shrd eax,edx,16
 };
 
-struct FractionState {
-  int32_t scale;
-  int64_t remainder[2];
-  bool active;
-};
-
 FractionState g_state = {};
 
 int32_t OriginalScale(int32_t delta, int32_t scale) {
@@ -45,25 +39,7 @@ extern "C" int32_t __stdcall ScaleWithRemainder(int32_t delta, int32_t scale,
       static_cast<uint32_t>(
           *reinterpret_cast<volatile int32_t *>(kMouseScaleAddress))
       << 11);
-  const bool needsCorrection = scale != baseScale && (scale & 0xFFFF) != 0;
-  if (!needsCorrection) {
-    Reset();
-    return OriginalScale(delta, scale);
-  }
-
-  if (!g_state.active || g_state.scale != scale) {
-    g_state.scale = scale;
-    g_state.remainder[0] = 0;
-    g_state.remainder[1] = 0;
-    g_state.active = true;
-  }
-
-  const int safeAxis = axis == 0 ? 0 : 1;
-  const int64_t value =
-      static_cast<int64_t>(delta) * scale + g_state.remainder[safeAxis];
-  const int32_t output = static_cast<int32_t>(value / 65536);
-  g_state.remainder[safeAxis] = value - static_cast<int64_t>(output) * 65536;
-  return output;
+  return EvaluateWithState(delta, scale, baseScale, axis, &g_state);
 }
 
 bool IsExecutableSection(const IMAGE_SECTION_HEADER &section) {
@@ -202,6 +178,26 @@ void Reset() {
   g_state.remainder[0] = 0;
   g_state.remainder[1] = 0;
   g_state.active = false;
+}
+
+int32_t EvaluateWithState(int32_t delta, int32_t scale, int32_t baseScale,
+                          int axis, FractionState* state) {
+  if (state == nullptr) return OriginalScale(delta, scale);
+  const bool needsCorrection = scale != baseScale && (scale & 0xFFFF) != 0;
+  if (!needsCorrection) {
+    *state = {};
+    return OriginalScale(delta, scale);
+  }
+  if (!state->active || state->scale != scale) {
+    state->scale = scale;
+    state->remainder[0] = state->remainder[1] = 0;
+    state->active = true;
+  }
+  const int safeAxis = axis == 0 ? 0 : 1;
+  const int64_t value = static_cast<int64_t>(delta) * scale + state->remainder[safeAxis];
+  const int32_t output = static_cast<int32_t>(value / 65536);
+  state->remainder[safeAxis] = value - static_cast<int64_t>(output) * 65536;
+  return output;
 }
 
 bool Install(bool enabled) {

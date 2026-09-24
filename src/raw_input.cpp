@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "game_window.h"
+#include "high_rate_camera_rotation.h"
 #include "logger.h"
 
 namespace raw_input {
@@ -49,8 +50,12 @@ volatile LONG g_droppedPackets = 0;
 volatile LONG g_reportCount = 0;
 volatile LONG g_logicPollCount = 0;
 volatile LONG g_renderPollCount = 0;
-volatile LONG g_intervalX = 0;
-volatile LONG g_intervalY = 0;
+volatile LONG g_intervalAcceptedX = 0;
+volatile LONG g_intervalAcceptedY = 0;
+volatile LONG g_intervalLogicX = 0;
+volatile LONG g_intervalLogicY = 0;
+volatile LONG g_intervalRenderX = 0;
+volatile LONG g_intervalRenderY = 0;
 volatile LONG g_absoluteReports = 0;
 volatile LONG g_sizeFailures = 0;
 volatile LONG g_readFailures = 0;
@@ -107,6 +112,7 @@ void DispatchEvent(UINT message, WPARAM state, LPARAM position) {
 }
 
 void ClearInputState() {
+    high_rate_camera_rotation::Invalidate();
     InterlockedExchange(&g_logicAccumX, 0);
     InterlockedExchange(&g_logicAccumY, 0);
     InterlockedExchange(&g_renderAccumX, 0);
@@ -218,6 +224,8 @@ void ProcessRawInput(HRAWINPUT handle) {
                     InterlockedExchangeAdd(&g_renderAccumY, mouse.lLastY);
                     InterlockedExchangeAdd(&g_totalRawX, mouse.lLastX);
                     InterlockedExchangeAdd(&g_totalRawY, mouse.lLastY);
+                    InterlockedExchangeAdd(&g_intervalAcceptedX, mouse.lLastX);
+                    InterlockedExchangeAdd(&g_intervalAcceptedY, mouse.lLastY);
                     UpdateVirtualCursor(mouse.lLastX, mouse.lLastY);
                 }
             } else {
@@ -353,16 +361,18 @@ extern "C" void __cdecl RawPollMouseInput() {
     volatile LONG* accumY = g_renderPollContext ? &g_renderAccumY : &g_logicAccumY;
     const LONG x = InterlockedExchange(accumX, 0);
     const LONG y = InterlockedExchange(accumY, 0);
-    InterlockedExchangeAdd(&g_intervalX, x);
-    InterlockedExchangeAdd(&g_intervalY, y);
     *reinterpret_cast<volatile LONG*>(kRelativeX) = x;
     *reinterpret_cast<volatile LONG*>(kRelativeY) = y;
     if (g_renderPollContext) {
+        InterlockedExchangeAdd(&g_intervalRenderX, x);
+        InterlockedExchangeAdd(&g_intervalRenderY, y);
         InterlockedExchange(&g_lastRenderDeltaX, x);
         InterlockedExchange(&g_lastRenderDeltaY, y);
         InterlockedIncrement(&g_renderPollCount);
         return;
     }
+    InterlockedExchangeAdd(&g_intervalLogicX, x);
+    InterlockedExchangeAdd(&g_intervalLogicY, y);
     InterlockedExchangeAdd(&g_logicCommittedRawX, x);
     InterlockedExchangeAdd(&g_logicCommittedRawY, y);
     InterlockedIncrement(&g_logicPollSerial);
@@ -372,17 +382,23 @@ extern "C" void __cdecl RawPollMouseInput() {
         const LONG reports = InterlockedExchange(&g_reportCount, 0);
         const LONG logicPolls = InterlockedExchange(&g_logicPollCount, 0);
         const LONG renderPolls = InterlockedExchange(&g_renderPollCount, 0);
-        const LONG totalX = InterlockedExchange(&g_intervalX, 0);
-        const LONG totalY = InterlockedExchange(&g_intervalY, 0);
+        const LONG acceptedX = InterlockedExchange(&g_intervalAcceptedX, 0);
+        const LONG acceptedY = InterlockedExchange(&g_intervalAcceptedY, 0);
+        const LONG logicX = InterlockedExchange(&g_intervalLogicX, 0);
+        const LONG logicY = InterlockedExchange(&g_intervalLogicY, 0);
+        const LONG renderX = InterlockedExchange(&g_intervalRenderX, 0);
+        const LONG renderY = InterlockedExchange(&g_intervalRenderY, 0);
         const LONG dropped = InterlockedExchange(&g_droppedPackets, 0);
         const LONG absolute = InterlockedExchange(&g_absoluteReports, 0);
         const LONG sizeFailures = InterlockedExchange(&g_sizeFailures, 0);
         const LONG readFailures = InterlockedExchange(&g_readFailures, 0);
         g_lastStatisticsTick = now;
         logger::Log("INFO", "RawInput.Stats",
-                    "interval_ms=%lu reports=%ld logic_polls=%ld render_polls=%ld total_dx=%ld total_dy=%ld dropped=%ld "
+                    "interval_ms=%lu reports=%ld logic_polls=%ld render_polls=%ld accepted_dx=%ld accepted_dy=%ld "
+                    "logic_dx=%ld logic_dy=%ld render_dx=%ld render_dy=%ld dropped=%ld "
                     "absolute_ignored=%ld size_failures=%ld read_failures=%ld active=%ld",
-                    g_statisticsIntervalMs, reports, logicPolls, renderPolls, totalX, totalY, dropped, absolute,
+                    g_statisticsIntervalMs, reports, logicPolls, renderPolls, acceptedX, acceptedY,
+                    logicX, logicY, renderX, renderY, dropped, absolute,
                     sizeFailures, readFailures,
                     InterlockedCompareExchange(&g_backendState, kInactive, kInactive) == kActive);
         game_window::HandleStatisticsInterval();
