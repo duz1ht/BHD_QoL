@@ -8,6 +8,7 @@
 
 #include "logger.h"
 #include "raw_input.h"
+#include "high_rate_camera_rotation.h"
 
 namespace free_rate_mouse_poll {
 namespace {
@@ -15,14 +16,19 @@ constexpr uintptr_t kCalculateCameraPositions = 0x0043B5E0;
 constexpr uintptr_t kRenderCameraCallSite = 0x004B7297;
 constexpr unsigned char kExpectedCall[] = {0xE8, 0x44, 0x43, 0xF8, 0xFF};
 using CalculateCameraPositionsFn = int(__cdecl*)();
+bool g_installed = false;
 
 extern "C" int __cdecl CalculateCameraPositions_FreeRatePollHook() {
     raw_input::PollForRenderFrame();
-    return reinterpret_cast<CalculateCameraPositionsFn>(kCalculateCameraPositions)();
+    const int result =
+        reinterpret_cast<CalculateCameraPositionsFn>(kCalculateCameraPositions)();
+    high_rate_camera_rotation::Apply();
+    return result;
 }
 }  // namespace
 
 bool Install(bool enabled) {
+    g_installed = false;
     if (!enabled) {
         logger::Log("INFO", "FreeRateMousePoll", "feature disabled");
         return true;
@@ -64,7 +70,10 @@ bool Install(bool enabled) {
     logger::Log("INFO", "FreeRateMousePoll",
                 "render-frame PollMouseInput hook installed at 0x%08lX",
                 static_cast<unsigned long>(kRenderCameraCallSite));
+    g_installed = true;
     return true;
 }
+
+bool IsInstalled() { return g_installed; }
 
 }  // namespace free_rate_mouse_poll

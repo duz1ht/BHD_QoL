@@ -32,6 +32,11 @@ volatile LONG g_renderAccumX = 0;
 volatile LONG g_renderAccumY = 0;
 volatile LONG g_lastRenderDeltaX = 0;
 volatile LONG g_lastRenderDeltaY = 0;
+volatile LONG g_totalRawX = 0;
+volatile LONG g_totalRawY = 0;
+volatile LONG g_logicCommittedRawX = 0;
+volatile LONG g_logicCommittedRawY = 0;
+volatile LONG g_logicPollSerial = 0;
 volatile LONG g_buttonState = 0;
 enum BackendState : LONG { kInactive = 0, kRecoveryPending = 1, kActive = 2 };
 volatile LONG g_backendState = kInactive;
@@ -121,6 +126,11 @@ void ClearInputState() {
     InterlockedExchange(&g_renderAccumY, 0);
     InterlockedExchange(&g_lastRenderDeltaX, 0);
     InterlockedExchange(&g_lastRenderDeltaY, 0);
+    InterlockedExchange(&g_totalRawX, 0);
+    InterlockedExchange(&g_totalRawY, 0);
+    InterlockedExchange(&g_logicCommittedRawX, 0);
+    InterlockedExchange(&g_logicCommittedRawY, 0);
+    InterlockedExchange(&g_logicPollSerial, 0);
     InterlockedExchange(&g_buttonState, 0);
 }
 
@@ -219,6 +229,8 @@ void ProcessRawInput(HRAWINPUT handle) {
                     InterlockedExchangeAdd(&g_logicAccumY, mouse.lLastY);
                     InterlockedExchangeAdd(&g_renderAccumX, mouse.lLastX);
                     InterlockedExchangeAdd(&g_renderAccumY, mouse.lLastY);
+                    InterlockedExchangeAdd(&g_totalRawX, mouse.lLastX);
+                    InterlockedExchangeAdd(&g_totalRawY, mouse.lLastY);
                     InterlockedExchangeAdd(&g_rawIntervalX, mouse.lLastX);
                     InterlockedExchangeAdd(&g_rawIntervalY, mouse.lLastY);
                     UpdateVirtualCursor(mouse.lLastX, mouse.lLastY);
@@ -364,6 +376,9 @@ extern "C" void __cdecl RawPollMouseInput() {
     } else {
         x = InterlockedExchange(&g_logicAccumX, 0);
         y = InterlockedExchange(&g_logicAccumY, 0);
+        InterlockedExchangeAdd(&g_logicCommittedRawX, x);
+        InterlockedExchangeAdd(&g_logicCommittedRawY, y);
+        InterlockedIncrement(&g_logicPollSerial);
         InterlockedExchangeAdd(&g_logicIntervalX, x);
         InterlockedExchangeAdd(&g_logicIntervalY, y);
         InterlockedIncrement(&g_logicPollCount);
@@ -484,5 +499,19 @@ void PollForRenderFrame() {
 RenderMouseDelta GetLastRenderDelta() {
     return {InterlockedCompareExchange(&g_lastRenderDeltaX, 0, 0),
             InterlockedCompareExchange(&g_lastRenderDeltaY, 0, 0)};
+}
+PredictionSnapshot GetPredictionSnapshot() {
+    PredictionSnapshot result = {};
+    LONG before = 0;
+    do {
+        before = InterlockedCompareExchange(&g_logicPollSerial, 0, 0);
+        result.totalX = InterlockedCompareExchange(&g_totalRawX, 0, 0);
+        result.totalY = InterlockedCompareExchange(&g_totalRawY, 0, 0);
+        result.committedX = InterlockedCompareExchange(&g_logicCommittedRawX, 0, 0);
+        result.committedY = InterlockedCompareExchange(&g_logicCommittedRawY, 0, 0);
+        result.logicPollSerial =
+            InterlockedCompareExchange(&g_logicPollSerial, 0, 0);
+    } while (before != result.logicPollSerial);
+    return result;
 }
 }  // namespace raw_input

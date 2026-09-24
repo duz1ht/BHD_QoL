@@ -11,6 +11,7 @@
 #include "game_window.h"
 #include "raw_input.h"
 #include "free_rate_mouse_poll.h"
+#include "high_rate_camera_rotation.h"
 #include "mouse_scaling_fix.h"
 #include "camera_fov.h"
 
@@ -30,6 +31,7 @@ struct PatchConfig {
     bool scaleCursorClipToResolution = true;
     bool rawMouseInput = true;
     bool freeRateMousePoll = true;
+    bool highRateCameraRotation = true;
     bool restoreCursorClip = true;
     bool mouseScalingFix = true;
     bool useCorrectAspectFov = true;
@@ -234,6 +236,8 @@ PatchConfig LoadPatchConfig() {
     config.rawMouseInput = BoolFromIni(iniPath, L"RawMouseInput", config.rawMouseInput);
     config.freeRateMousePoll =
         BoolFromIni(iniPath, L"FreeRateMousePoll", config.freeRateMousePoll);
+    config.highRateCameraRotation = BoolFromIni(
+        iniPath, L"HighRateCameraRotation", config.highRateCameraRotation);
     config.restoreCursorClip =
         BoolFromIni(iniPath, L"RestoreCursorClip", config.restoreCursorClip);
     config.mouseScalingFix = BoolFromIni(iniPath, L"MouseScalingFix", config.mouseScalingFix);
@@ -260,12 +264,13 @@ void ApplyBhdPatches() {
     logger::Initialize(config.loggingEnabled);
     logger::Log("INFO", "Config",
                 "AdaptiveScreenCenter=%d ScaleCursorClipToResolution=%d RawMouseInput=%d "
-                "FreeRateMousePoll=%d "
+                "FreeRateMousePoll=%d HighRateCameraRotation=%d "
                 "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
                 "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.adaptiveScreenCenter, config.scaleCursorClipToResolution,
-                config.rawMouseInput, config.freeRateMousePoll, config.restoreCursorClip,
+                config.rawMouseInput, config.freeRateMousePoll,
+                config.highRateCameraRotation, config.restoreCursorClip,
                 config.mouseScalingFix,
                 config.useCorrectAspectFov, config.dpiAware,
                 config.borderlessFullscreen, config.forceDesktopResolution,
@@ -314,6 +319,7 @@ void ApplyBhdPatches() {
     const bool rawInstalled =
         raw_input::Install({config.rawMouseInput, config.rawInputStatisticsIntervalMs});
     free_rate_mouse_poll::Install(config.freeRateMousePoll && config.rawMouseInput && rawInstalled);
+    high_rate_camera_rotation::Install(config.highRateCameraRotation);
     game_window::Configure(
         {config.rawMouseInput && rawInstalled, config.restoreCursorClip,
          config.borderlessFullscreen && borderlessInitialized,

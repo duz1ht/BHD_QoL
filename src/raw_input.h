@@ -14,6 +14,14 @@ struct RenderMouseDelta {
     LONG y;
 };
 
+struct PredictionSnapshot {
+    LONG totalX;
+    LONG totalY;
+    LONG committedX;
+    LONG committedY;
+    LONG logicPollSerial;
+};
+
 bool Install(const Settings& settings);
 bool AttachWindow(HWND window);
 void HandleRawInput(HRAWINPUT input);
@@ -24,5 +32,6 @@ bool IsEnabled();
 bool IsBackendActive();
 void PollForRenderFrame();
 RenderMouseDelta GetLastRenderDelta();
+PredictionSnapshot GetPredictionSnapshot();
 
 }  // namespace raw_input

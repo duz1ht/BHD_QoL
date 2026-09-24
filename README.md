@@ -31,6 +31,7 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | `DPIAware` | `1` | Prevents Windows DPI scaling from distorting window, monitor, and cursor coordinates. Recommended for borderless mode. |
 | `RawMouseInput` | `1` | Uses Windows Raw Input for more reliable relative mouse input while preserving the game's sensitivity, inversion, and bindings. |
 | `FreeRateMousePoll` | `1` | Polls an independent Raw Input stream once per rendered camera frame without consuming logic input. Requires `RawMouseInput=1`; it does not by itself make the camera update at render rate. |
+| `HighRateCameraRotation` | `1` | Predicts local on-foot first-person camera yaw and pitch at render rate. Requires `RawMouseInput=1` and `FreeRateMousePoll=1`; authoritative gameplay remains at the original logic rate. |
 | `MouseScalingFix` | `1` | Fixes rounding of small mouse movements, especially noticeable when using scoped weapons. |
 | `AdaptiveScreenCenter` | `1` | Calculates the screen center from the current resolution instead of using fixed values. |
 | `ScaleCursorClipToResolution` | `1` | Uses the current resolution when confining the cursor instead of fixed 640x480 bounds. |
@@ -53,6 +54,7 @@ UseCorrectAspectFOV=1
 DPIAware=1
 RawMouseInput=1
 FreeRateMousePoll=1
+HighRateCameraRotation=1
 MouseScalingFix=1
 AdaptiveScreenCenter=1
 ScaleCursorClipToResolution=1

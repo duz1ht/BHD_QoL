@@ -32,6 +32,7 @@ struct FractionState {
 };
 
 FractionState g_state = {};
+bool g_fixEnabled = false;
 
 int32_t OriginalScale(int32_t delta, int32_t scale) {
   const uint64_t product =
@@ -204,7 +205,45 @@ void Reset() {
   g_state.active = false;
 }
 
+PredictionState GetPredictionState() {
+  return {g_state.scale, {g_state.remainder[0], g_state.remainder[1]},
+          g_state.active, g_fixEnabled};
+}
+
+int32_t ScaleForPrediction(int32_t delta, int32_t scale, int axis,
+                           PredictionState *state) {
+  if (state == nullptr || !state->fixEnabled)
+    return OriginalScale(delta, scale);
+
+  const int32_t baseScale = static_cast<int32_t>(
+      static_cast<uint32_t>(
+          *reinterpret_cast<volatile int32_t *>(kMouseScaleAddress))
+      << 11);
+  const bool needsCorrection = scale != baseScale && (scale & 0xFFFF) != 0;
+  if (!needsCorrection) {
+    state->scale = 0;
+    state->remainder[0] = 0;
+    state->remainder[1] = 0;
+    state->active = false;
+    return OriginalScale(delta, scale);
+  }
+
+  if (!state->active || state->scale != scale) {
+    state->scale = scale;
+    state->remainder[0] = 0;
+    state->remainder[1] = 0;
+    state->active = true;
+  }
+  const int safeAxis = axis == 0 ? 0 : 1;
+  const int64_t value =
+      static_cast<int64_t>(delta) * scale + state->remainder[safeAxis];
+  const int32_t output = static_cast<int32_t>(value / 65536);
+  state->remainder[safeAxis] = value - static_cast<int64_t>(output) * 65536;
+  return output;
+}
+
 bool Install(bool enabled) {
+  g_fixEnabled = false;
   if (!enabled) {
     logger::Log("INFO", "MouseScalingFix", "feature disabled");
     return false;
@@ -221,6 +260,7 @@ bool Install(bool enabled) {
                 GetLastError());
     return false;
   }
+  g_fixEnabled = true;
   return true;
 }
 
