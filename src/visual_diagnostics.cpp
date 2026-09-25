@@ -99,7 +99,9 @@ void SetCameraSupport(CameraSupportReason reason, LONG cameraMode, LONG pauseSta
 
 void RecordCameraFrame(bool valid, bool visualYawChanged, bool officialYawChanged,
                        LONG newRawX, LONG newRawY, LONG pendingX, LONG pendingY,
-                       uint32_t visualYaw, uint32_t visualPitch, uint32_t officialYaw) {
+                       uint32_t visualYaw, uint32_t visualPitch, uint32_t officialYaw,
+                       LONG firstStageX, LONG firstStageY, LONG scaledX, LONG scaledY,
+                       LONG yawAction, LONG pitchAction, LONG lookBindingMatches) {
     if (g_shared == nullptr) return;
     InterlockedExchange(&g_shared->cameraValid, valid ? 1 : 0);
     Add(&g_shared->cameraFrames);
@@ -112,6 +114,13 @@ void RecordCameraFrame(bool valid, bool visualYawChanged, bool officialYawChange
     InterlockedExchange(&g_shared->visualYaw, static_cast<LONG>(visualYaw));
     InterlockedExchange(&g_shared->visualPitch, static_cast<LONG>(visualPitch));
     InterlockedExchange(&g_shared->officialYaw, static_cast<LONG>(officialYaw));
+    InterlockedExchange(&g_shared->firstStageX, firstStageX);
+    InterlockedExchange(&g_shared->firstStageY, firstStageY);
+    InterlockedExchange(&g_shared->scaledX, scaledX);
+    InterlockedExchange(&g_shared->scaledY, scaledY);
+    InterlockedExchange(&g_shared->yawAction, yawAction);
+    InterlockedExchange(&g_shared->pitchAction, pitchAction);
+    InterlockedExchange(&g_shared->lookBindingMatches, lookBindingMatches);
 }
 
 void InvalidateCamera() {

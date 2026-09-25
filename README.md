@@ -78,7 +78,7 @@ A DLL e o overlay devem sempre ser copiados do mesmo build. O nome da memória
 compartilhada é estável e a DLL permite leitura mesmo quando jogo e overlay são
 iniciados com níveis de elevação diferentes.
 
-O executável atual mostra `[v2]` no título do painel.
+O executável atual mostra `[v3]` no título do painel.
 Se essa marca não estiver visível, o arquivo executado é uma cópia antiga. Na
 configuração padrão do Visual Studio, use os arquivos recém-gerados em
 `out/build/x86-Release/`. O alvo `dinput8` agora depende do alvo do overlay, de

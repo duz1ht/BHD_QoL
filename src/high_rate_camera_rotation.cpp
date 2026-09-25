@@ -68,6 +68,7 @@ uint32_t g_lastOfficialYaw = 0;
 mouse_scaling_fix::FractionState g_scalingState;
 DWORD g_lastStatisticsTick = 0;
 DWORD g_statisticsIntervalMs = 5000;
+DWORD g_lastSupportedTick = 0;
 
 template <typename T>
 T Read(uintptr_t address) {
@@ -113,7 +114,11 @@ int32_t CurrentScale() {
     return scale;
 }
 
-struct LookActions { int32_t yaw = 0; int32_t pitch = 0; };
+struct LookActions {
+    int32_t yaw = 0;
+    int32_t pitch = 0;
+    int32_t bindingMatches = 0;
+};
 
 void AddAction(LookActions* actions, int16_t action, int32_t value) {
     switch (action) {
@@ -123,6 +128,11 @@ void AddAction(LookActions* actions, int16_t action, int32_t value) {
         case kPitchNegative: actions->pitch -= value; break;
         default: break;
     }
+}
+
+bool IsLookAction(int16_t action) {
+    return action == kPitchPositive || action == kPitchNegative ||
+           action == kYawPositive || action == kYawNegative;
 }
 
 LookActions ResolveBindings(int32_t mouseX, int32_t mouseY) {
@@ -136,8 +146,14 @@ LookActions ResolveBindings(int32_t mouseX, int32_t mouseY) {
                                      definitionIndex * kBindingDefinitionStride;
         const int16_t action = Read<int16_t>(definition);
         const uint32_t flags = Read<uint32_t>(definition + 4);
-        if ((flags & kMouseXAxisFlag) != 0) AddAction(&result, action, mouseX);
-        if ((flags & kMouseYAxisFlag) != 0) AddAction(&result, action, mouseY);
+        if ((flags & kMouseXAxisFlag) != 0) {
+            AddAction(&result, action, mouseX);
+            if (IsLookAction(action)) ++result.bindingMatches;
+        }
+        if ((flags & kMouseYAxisFlag) != 0) {
+            AddAction(&result, action, mouseY);
+            if (IsLookAction(action)) ++result.bindingMatches;
+        }
     }
     return result;
 }
@@ -156,6 +172,7 @@ void Rebase(uintptr_t owner, const raw_input::PredictionSnapshot& snapshot) {
     g_lastOfficialYaw = g_visualYaw;
     g_scalingState = {};
     g_valid = true;
+    g_lastSupportedTick = GetTickCount();
 }
 
 void LogStatistics(const raw_input::PredictionSnapshot& snapshot) {
@@ -201,7 +218,15 @@ void EvaluateAndApplyForCurrentFrame() {
         return;
     }
     uintptr_t owner = 0;
-    if (!IsSupported(&owner)) { Invalidate(); return; }
+    if (!IsSupported(&owner)) {
+        // This call site can run for auxiliary/non-local camera calculations
+        // between two local first-person calls. Do not destroy persistent
+        // visual orientation for those transient calls. A sustained unsupported
+        // state still rebases safely when first person returns.
+        if (g_valid && GetTickCount() - g_lastSupportedTick > 250) Invalidate();
+        return;
+    }
+    g_lastSupportedTick = GetTickCount();
     const raw_input::PredictionSnapshot snapshot = raw_input::GetPredictionSnapshot();
     if (!g_valid || owner != g_owner) { Rebase(owner, snapshot); return; }
 
@@ -256,7 +281,8 @@ void EvaluateAndApplyForCurrentFrame() {
         true, g_visualYaw != oldYaw, officialYawChanged,
         newX, newY, static_cast<LONG>(snapshot.totalX - snapshot.committedX),
         static_cast<LONG>(snapshot.totalY - snapshot.committedY),
-        g_visualYaw, g_visualPitch, officialYaw);
+        g_visualYaw, g_visualPitch, officialYaw, stageX, stageY, scaledX, scaledY,
+        actions.yaw, actions.pitch, actions.bindingMatches);
     LogStatistics(snapshot);
 }
 

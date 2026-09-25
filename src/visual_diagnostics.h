@@ -8,7 +8,7 @@ namespace visual_diagnostics {
 
 constexpr wchar_t kMappingName[] = L"Local\\BHD_QoL_VisualDiagnostics";
 constexpr uint32_t kMagic = 0x51444842; // "BHDQ"
-constexpr uint32_t kVersion = 2;
+constexpr uint32_t kVersion = 3;
 
 enum class CameraSupportReason : LONG {
     Supported = 0,
@@ -60,6 +60,13 @@ struct SharedTelemetry {
     volatile LONG localPlayer;
     volatile LONG cameraOwner;
     volatile LONG rideTarget;
+    volatile LONG firstStageX;
+    volatile LONG firstStageY;
+    volatile LONG scaledX;
+    volatile LONG scaledY;
+    volatile LONG yawAction;
+    volatile LONG pitchAction;
+    volatile LONG lookBindingMatches;
 };
 
 bool Initialize();
@@ -74,7 +81,9 @@ void SetCameraSupport(CameraSupportReason reason, LONG cameraMode, LONG pauseSta
                       uintptr_t localPlayer, uintptr_t cameraOwner, uintptr_t rideTarget);
 void RecordCameraFrame(bool valid, bool visualYawChanged, bool officialYawChanged,
                        LONG newRawX, LONG newRawY, LONG pendingX, LONG pendingY,
-                       uint32_t visualYaw, uint32_t visualPitch, uint32_t officialYaw);
+                       uint32_t visualYaw, uint32_t visualPitch, uint32_t officialYaw,
+                       LONG firstStageX, LONG firstStageY, LONG scaledX, LONG scaledY,
+                       LONG yawAction, LONG pitchAction, LONG lookBindingMatches);
 void InvalidateCamera();
 
 } // namespace visual_diagnostics

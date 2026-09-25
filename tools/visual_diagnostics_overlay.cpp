@@ -10,7 +10,7 @@ namespace {
 constexpr UINT_PTR kRefreshTimer = 1;
 constexpr UINT kRefreshMs = 100;
 constexpr int kOverlayWidth = 460;
-constexpr int kOverlayHeight = 382;
+constexpr int kOverlayHeight = 454;
 
 HANDLE g_mapping = nullptr;
 const visual_diagnostics::SharedTelemetry* g_shared = nullptr;
@@ -166,7 +166,7 @@ void Paint(HWND window) {
                              CLEARTYPE_QUALITY, FIXED_PITCH, L"Consolas");
     const HGDIOBJ oldFont = SelectObject(dc, font);
     SetTextColor(dc, RGB(120, 210, 255));
-    const wchar_t title[] = L"BHD QoL - Visual Pipeline [v2]";
+    const wchar_t title[] = L"BHD QoL - Visual Pipeline [v3]";
     TextOutW(dc, 16, 12, title, static_cast<int>(sizeof(title) / sizeof(title[0]) - 1));
 
     if (g_shared == nullptr) {
@@ -216,11 +216,22 @@ void Paint(HWND window) {
                       Load(&g_shared->rideTarget));
         TextOutW(dc, 16, 270, guards, lstrlenW(guards));
 
+        std::swprintf(guards, sizeof(guards) / sizeof(guards[0]),
+                      L"stage X=%ld Y=%ld   scaled X=%ld Y=%ld",
+                      Load(&g_shared->firstStageX), Load(&g_shared->firstStageY),
+                      Load(&g_shared->scaledX), Load(&g_shared->scaledY));
+        TextOutW(dc, 16, 294, guards, lstrlenW(guards));
+        std::swprintf(guards, sizeof(guards) / sizeof(guards[0]),
+                      L"look bindings=%ld   yaw action=%ld pitch action=%ld",
+                      Load(&g_shared->lookBindingMatches), Load(&g_shared->yawAction),
+                      Load(&g_shared->pitchAction));
+        TextOutW(dc, 16, 318, guards, lstrlenW(guards));
+
         wchar_t reason[220] = {};
         std::swprintf(reason, sizeof(reason) / sizeof(reason[0]), L"Guard: %ls",
                       SupportReason(Load(&g_shared->cameraSupportReason)));
         SetTextColor(dc, Load(&g_shared->cameraValid) ? good : RGB(255, 190, 80));
-        TextOutW(dc, 16, 294, reason, lstrlenW(reason));
+        TextOutW(dc, 16, 342, reason, lstrlenW(reason));
 
         const bool moving = g_rates.rawReports > 10.0;
         const bool renderRate = g_rates.cameraFrames > g_rates.logicPolls * 1.5;
@@ -231,10 +242,10 @@ void Paint(HWND window) {
             : renderRate && visualFaster ? L"CAMERA VISUAL LIVRE PELO FPS DO RENDER"
             : L"ATENCAO: CAMERA AINDA PARECE LIMITADA PELA LOGICA";
         SetTextColor(dc, renderRate && visualFaster ? good : RGB(255, 190, 80));
-        TextOutW(dc, 16, 322, status, lstrlenW(status));
+        TextOutW(dc, 16, 378, status, lstrlenW(status));
         SetTextColor(dc, RGB(155, 165, 175));
         const wchar_t hint[] = L"F8 mostra/oculta | F9 fecha";
-        TextOutW(dc, 16, 350, hint, static_cast<int>(sizeof(hint) / sizeof(hint[0]) - 1));
+        TextOutW(dc, 16, 422, hint, static_cast<int>(sizeof(hint) / sizeof(hint[0]) - 1));
     }
     SelectObject(dc, oldFont);
     DeleteObject(font);
@@ -266,7 +277,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     HWND window = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT |
                                       WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-                                  className, L"BHD QoL Visual Diagnostics v2", WS_POPUP,
+                                  className, L"BHD QoL Visual Diagnostics v3", WS_POPUP,
                                   16, 16, kOverlayWidth, kOverlayHeight,
                                   nullptr, nullptr, instance, nullptr);
     if (window == nullptr) return 2;
