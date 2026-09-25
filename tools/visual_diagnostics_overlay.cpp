@@ -166,7 +166,7 @@ void Paint(HWND window) {
                              CLEARTYPE_QUALITY, FIXED_PITCH, L"Consolas");
     const HGDIOBJ oldFont = SelectObject(dc, font);
     SetTextColor(dc, RGB(120, 210, 255));
-    const wchar_t title[] = L"BHD QoL - Visual Pipeline";
+    const wchar_t title[] = L"BHD QoL - Visual Pipeline [v2]";
     TextOutW(dc, 16, 12, title, static_cast<int>(sizeof(title) / sizeof(title[0]) - 1));
 
     if (g_shared == nullptr) {
@@ -266,7 +266,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     HWND window = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT |
                                       WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-                                  className, L"BHD QoL Visual Diagnostics", WS_POPUP,
+                                  className, L"BHD QoL Visual Diagnostics v2", WS_POPUP,
                                   16, 16, kOverlayWidth, kOverlayHeight,
                                   nullptr, nullptr, instance, nullptr);
     if (window == nullptr) return 2;

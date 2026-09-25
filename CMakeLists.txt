@@ -21,7 +21,7 @@ set_target_properties(dinput8 PROPERTIES
 )
 
 target_compile_definitions(dinput8 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-target_link_libraries(dinput8 PRIVATE shlwapi)
+target_link_libraries(dinput8 PRIVATE shlwapi advapi32)
 
 add_executable(BHD_QoL_Overlay WIN32 tools/visual_diagnostics_overlay.cpp)
 target_include_directories(BHD_QoL_Overlay PRIVATE src)
@@ -29,3 +29,7 @@ target_compile_features(BHD_QoL_Overlay PRIVATE cxx_std_17)
 target_compile_definitions(BHD_QoL_Overlay PRIVATE
     WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 target_link_libraries(BHD_QoL_Overlay PRIVATE gdi32 user32)
+
+# Building the DLL target must also refresh the companion diagnostic binary;
+# otherwise Visual Studio can leave an older overlay beside a newly built DLL.
+add_dependencies(dinput8 BHD_QoL_Overlay)
