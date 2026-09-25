@@ -14,6 +14,7 @@
 #include "logger.h"
 #include "mouse_scaling_fix.h"
 #include "raw_input.h"
+#include "visual_diagnostics.h"
 
 namespace {
 constexpr uintptr_t kImageBase = 0x400000;
@@ -262,6 +263,7 @@ PatchConfig LoadPatchConfig() {
 void ApplyBhdPatches() {
     const PatchConfig config = LoadPatchConfig();
     logger::Initialize(config.loggingEnabled);
+    visual_diagnostics::Initialize();
     logger::Log("INFO", "Config",
                 "AdaptiveScreenCenter=%d ScaleCursorClipToResolution=%d RawMouseInput=%d FreeRateMousePoll=%d HighRateCameraRotation=%d "
                 "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "

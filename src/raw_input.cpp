@@ -8,6 +8,7 @@
 #include "game_window.h"
 #include "high_rate_camera_rotation.h"
 #include "logger.h"
+#include "visual_diagnostics.h"
 
 namespace raw_input {
 namespace {
@@ -226,6 +227,7 @@ void ProcessRawInput(HRAWINPUT handle) {
                     InterlockedExchangeAdd(&g_totalRawY, mouse.lLastY);
                     InterlockedExchangeAdd(&g_intervalAcceptedX, mouse.lLastX);
                     InterlockedExchangeAdd(&g_intervalAcceptedY, mouse.lLastY);
+                    visual_diagnostics::RecordRawReport(mouse.lLastX, mouse.lLastY);
                     UpdateVirtualCursor(mouse.lLastX, mouse.lLastY);
                 }
             } else {
@@ -369,6 +371,7 @@ extern "C" void __cdecl RawPollMouseInput() {
         InterlockedExchange(&g_lastRenderDeltaX, x);
         InterlockedExchange(&g_lastRenderDeltaY, y);
         InterlockedIncrement(&g_renderPollCount);
+        visual_diagnostics::RecordRenderPoll(x, y);
         return;
     }
     InterlockedExchangeAdd(&g_intervalLogicX, x);
@@ -377,6 +380,7 @@ extern "C" void __cdecl RawPollMouseInput() {
     InterlockedExchangeAdd(&g_logicCommittedRawY, y);
     InterlockedIncrement(&g_logicPollSerial);
     InterlockedIncrement(&g_logicPollCount);
+    visual_diagnostics::RecordLogicPoll(x, y);
     const DWORD now = GetTickCount();
     if (now - g_lastStatisticsTick >= g_statisticsIntervalMs) {
         const LONG reports = InterlockedExchange(&g_reportCount, 0);
@@ -461,7 +465,10 @@ bool Install(const Settings& settings) {
     return true;
 }
 
-bool AttachWindow(HWND window) { return RegisterForWindow(window); }
+bool AttachWindow(HWND window) {
+    visual_diagnostics::SetGameWindow(window);
+    return RegisterForWindow(window);
+}
 void HandleRawInput(HRAWINPUT input) { ProcessRawInput(input); }
 void HandleFocusLost() {
     if (!g_enabled) return;
@@ -479,8 +486,10 @@ void HandleDestroy() {
 }
 bool IsEnabled() { return g_enabled; }
 bool IsActive() {
-    return g_enabled &&
-           InterlockedCompareExchange(&g_backendState, kInactive, kInactive) == kActive;
+    const bool active = g_enabled &&
+        InterlockedCompareExchange(&g_backendState, kInactive, kInactive) == kActive;
+    visual_diagnostics::SetRawActive(active);
+    return active;
 }
 
 bool PollForRenderFrame() {

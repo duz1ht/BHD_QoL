@@ -44,6 +44,30 @@ after focus, ownership, camera-mode, pause, or mount transitions. Unsupported
 camera states retain the native result. The authoritative player orientation
 and the original 62.5 Hz yaw filter are not patched.
 
+## Overlay de diagnóstico
+
+O build gera somente um executável auxiliar, `BHD_QoL_Overlay.exe`. Ele não
+injeta código e não lê a memória do jogo diretamente: a DLL publica telemetria
+em memória compartilhada e o executável apenas a apresenta em uma janela
+transparente, click-through e posicionada sobre a área do jogo.
+
+Inicie o jogo com `dinput8.dll` e depois execute `BHD_QoL_Overlay.exe`. O painel
+mostra, em Hz:
+
+- pacotes aceitos de Raw Input;
+- chamadas autoritativas de `PollMouseInput`;
+- chamadas de `PollMouseInput` no render;
+- execuções da câmera visual;
+- frames em que o yaw visual mudou;
+- atualizações do yaw oficial do jogador;
+- contagens Raw Input pendentes e recebidas no frame mais recente.
+
+Durante movimento contínuo, se as execuções/mudanças visuais acompanharem o
+FPS de render e ultrapassarem claramente as mudanças oficiais, o painel mostra
+`CAMERA VISUAL LIVRE PELO FPS DO RENDER`. Caso contrário, sinaliza que a câmera
+ainda aparenta estar limitada pela lógica. `F8` oculta/exibe o painel e `F9`
+encerra o overlay.
+
 ### `[Logging]`
 
 | Option | Default | Description |
@@ -81,7 +105,9 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=mingw32-toolchain.cmake
 cmake --build build
 ```
 
-The resulting DLL must be named `dinput8.dll`.
+Os artefatos utilizáveis são `dinput8.dll` e o único executável auxiliar,
+`BHD_QoL_Overlay.exe`. Os antigos executáveis individuais de teste não são mais
+gerados pelo CMake.
 
 ## Compatibility
 

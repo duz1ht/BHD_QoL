@@ -8,6 +8,7 @@
 #include "mouse_scaling_fix.h"
 #include "raw_input.h"
 #include "visual_camera_math.h"
+#include "visual_diagnostics.h"
 
 namespace high_rate_camera_rotation {
 namespace {
@@ -226,12 +227,22 @@ void EvaluateAndApplyForCurrentFrame() {
     ++g_cameraExecutions;
     if (g_visualYaw != oldYaw) ++g_visualYawChanges;
     const uint32_t officialYaw = Read<uint32_t>(owner + 20);
-    if (officialYaw != g_lastOfficialYaw) ++g_officialYawChanges;
+    const bool officialYawChanged = officialYaw != g_lastOfficialYaw;
+    if (officialYawChanged) ++g_officialYawChanges;
     g_lastOfficialYaw = officialYaw;
+    visual_diagnostics::RecordCameraFrame(
+        true, g_visualYaw != oldYaw, officialYawChanged,
+        newX, newY, static_cast<LONG>(snapshot.totalX - snapshot.committedX),
+        static_cast<LONG>(snapshot.totalY - snapshot.committedY),
+        g_visualYaw, g_visualPitch, officialYaw);
     LogStatistics(snapshot);
 }
 
-void Invalidate() { g_valid = false; g_owner = 0; }
+void Invalidate() {
+    g_valid = false;
+    g_owner = 0;
+    visual_diagnostics::InvalidateCamera();
+}
 
 VisualLookOrientation GetVisualLookOrientation() {
     return {g_valid, g_frameSerial, g_visualYaw, g_visualPitch};
