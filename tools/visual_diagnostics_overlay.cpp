@@ -17,6 +17,8 @@ const visual_diagnostics::SharedTelemetry* g_shared = nullptr;
 visual_diagnostics::SharedTelemetry g_previous = {};
 ULONGLONG g_previousTick = 0;
 bool g_userVisible = true;
+DWORD g_connectionError = ERROR_FILE_NOT_FOUND;
+bool g_incompatibleTelemetry = false;
 
 struct Rates {
     double rawReports = 0;
@@ -38,24 +40,36 @@ uint32_t Delta(LONG current, LONG previous) {
 
 bool Connect() {
     if (g_shared != nullptr) return true;
-    g_mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, visual_diagnostics::kMappingName);
+    constexpr const wchar_t* mappingNames[] = {
+        visual_diagnostics::kMappingName,
+        L"Local\\BHD_QoL_VisualDiagnostics_v2",
+        L"Local\\BHD_QoL_VisualDiagnostics_v1",
+    };
+    g_incompatibleTelemetry = false;
+    for (const wchar_t* name : mappingNames) {
+        g_mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, name);
+        if (g_mapping != nullptr) break;
+        g_connectionError = GetLastError();
+    }
     if (g_mapping == nullptr) return false;
     g_shared = static_cast<const visual_diagnostics::SharedTelemetry*>(
-        MapViewOfFile(g_mapping, FILE_MAP_READ, 0, 0,
-                      sizeof(visual_diagnostics::SharedTelemetry)));
+        MapViewOfFile(g_mapping, FILE_MAP_READ, 0, 0, 0));
     if (g_shared == nullptr) {
+        g_connectionError = GetLastError();
         CloseHandle(g_mapping);
         g_mapping = nullptr;
         return false;
     }
     if (g_shared->magic != visual_diagnostics::kMagic ||
         g_shared->version != visual_diagnostics::kVersion) {
+        g_incompatibleTelemetry = true;
         UnmapViewOfFile(g_shared);
         CloseHandle(g_mapping);
         g_shared = nullptr;
         g_mapping = nullptr;
         return false;
     }
+    g_connectionError = ERROR_SUCCESS;
     g_previous = *g_shared;
     g_previousTick = GetTickCount64();
     return true;
@@ -157,8 +171,18 @@ void Paint(HWND window) {
 
     if (g_shared == nullptr) {
         SetTextColor(dc, RGB(255, 190, 80));
-        const wchar_t waiting[] = L"Aguardando dfbhd.exe + dinput8.dll...";
-        TextOutW(dc, 16, 52, waiting, static_cast<int>(sizeof(waiting) / sizeof(waiting[0]) - 1));
+        const wchar_t* waiting = g_incompatibleTelemetry
+            ? L"Telemetria incompatível: copie a DLL e o overlay do mesmo build."
+            : L"Aguardando telemetria publicada por dinput8.dll...";
+        TextOutW(dc, 16, 52, waiting, lstrlenW(waiting));
+        wchar_t detail[200] = {};
+        std::swprintf(detail, sizeof(detail) / sizeof(detail[0]),
+                      L"OpenFileMapping error=%lu (2=nao encontrada, 5=acesso negado)",
+                      g_connectionError);
+        SetTextColor(dc, RGB(190, 195, 205));
+        TextOutW(dc, 16, 82, detail, lstrlenW(detail));
+        const wchar_t hint[] = L"Confirme dinput8.dll novo ao lado de DFBHD.EXE.";
+        TextOutW(dc, 16, 112, hint, static_cast<int>(sizeof(hint) / sizeof(hint[0]) - 1));
     } else {
         const COLORREF good = RGB(100, 240, 150);
         const COLORREF normal = RGB(225, 230, 235);

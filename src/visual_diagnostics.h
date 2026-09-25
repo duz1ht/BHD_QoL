@@ -6,7 +6,7 @@
 
 namespace visual_diagnostics {
 
-constexpr wchar_t kMappingName[] = L"Local\\BHD_QoL_VisualDiagnostics_v2";
+constexpr wchar_t kMappingName[] = L"Local\\BHD_QoL_VisualDiagnostics";
 constexpr uint32_t kMagic = 0x51444842; // "BHDQ"
 constexpr uint32_t kVersion = 2;
 

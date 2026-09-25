@@ -423,6 +423,9 @@ extern "C" HRESULT WINAPI DllUnregisterServer() {
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(module);
+        // Publish presence as soon as Windows loads this proxy. ApplyBhdPatches
+        // calls this again later; initialization is idempotent.
+        visual_diagnostics::Initialize();
     }
     return TRUE;
 }

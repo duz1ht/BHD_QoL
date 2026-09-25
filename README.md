@@ -71,6 +71,13 @@ FPS de render e ultrapassarem claramente as mudanças oficiais, o painel mostra
 ainda aparenta estar limitada pela lógica. `F8` oculta/exibe o painel e `F9`
 encerra o overlay.
 
+Se a conexão não ocorrer, o painel agora mostra o erro de `OpenFileMapping`.
+Erro `2` indica que a DLL não publicou a memória compartilhada (normalmente DLL
+antiga/incorreta ou proxy não carregado); erro `5` indica diferença de permissão.
+A DLL e o overlay devem sempre ser copiados do mesmo build. O nome da memória
+compartilhada é estável e a DLL permite leitura mesmo quando jogo e overlay são
+iniciados com níveis de elevação diferentes.
+
 ### `[Logging]`
 
 | Option | Default | Description |

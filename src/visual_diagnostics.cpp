@@ -16,7 +16,17 @@ void Add(volatile LONG* value, LONG amount = 1) {
 
 bool Initialize() {
     if (g_shared != nullptr) return true;
-    g_mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
+    SECURITY_DESCRIPTOR descriptor = {};
+    SECURITY_ATTRIBUTES security = {};
+    SECURITY_ATTRIBUTES* securityPointer = nullptr;
+    if (InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION) &&
+        SetSecurityDescriptorDacl(&descriptor, TRUE, nullptr, FALSE)) {
+        security.nLength = sizeof(security);
+        security.lpSecurityDescriptor = &descriptor;
+        security.bInheritHandle = FALSE;
+        securityPointer = &security;
+    }
+    g_mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, securityPointer, PAGE_READWRITE, 0,
                                    sizeof(SharedTelemetry), kMappingName);
     if (g_mapping == nullptr) {
         logger::Log("ERROR", "VisualDiagnostics", "CreateFileMapping failed error=%lu",
