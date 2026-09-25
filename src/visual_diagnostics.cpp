@@ -68,6 +68,25 @@ void RecordRenderPoll(LONG x, LONG y) {
     Add(&g_shared->renderY, y);
 }
 
+void RecordCameraEvaluation() {
+    if (g_shared != nullptr) Add(&g_shared->cameraEvaluations);
+}
+
+void SetCameraSupport(CameraSupportReason reason, LONG cameraMode, LONG pauseState,
+                      LONG mouseEnabled, uintptr_t inputObject, uintptr_t inputReady,
+                      uintptr_t localPlayer, uintptr_t cameraOwner, uintptr_t rideTarget) {
+    if (g_shared == nullptr) return;
+    InterlockedExchange(&g_shared->cameraSupportReason, static_cast<LONG>(reason));
+    InterlockedExchange(&g_shared->cameraMode, cameraMode);
+    InterlockedExchange(&g_shared->pauseState, pauseState);
+    InterlockedExchange(&g_shared->mouseEnabled, mouseEnabled);
+    InterlockedExchange(&g_shared->inputObject, static_cast<LONG>(inputObject));
+    InterlockedExchange(&g_shared->inputReady, static_cast<LONG>(inputReady));
+    InterlockedExchange(&g_shared->localPlayer, static_cast<LONG>(localPlayer));
+    InterlockedExchange(&g_shared->cameraOwner, static_cast<LONG>(cameraOwner));
+    InterlockedExchange(&g_shared->rideTarget, static_cast<LONG>(rideTarget));
+}
+
 void RecordCameraFrame(bool valid, bool visualYawChanged, bool officialYawChanged,
                        LONG newRawX, LONG newRawY, LONG pendingX, LONG pendingY,
                        uint32_t visualYaw, uint32_t visualPitch, uint32_t officialYaw) {

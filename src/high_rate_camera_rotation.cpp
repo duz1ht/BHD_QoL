@@ -75,14 +75,29 @@ T Read(uintptr_t address) {
 }
 
 bool IsSupported(uintptr_t* owner) {
-    if (!raw_input::IsActive() || Read<int32_t>(kCameraMode) != 0 ||
-        Read<int32_t>(kPauseState) != 0 || Read<int32_t>(kMouseEnabled) == 0 ||
-        Read<uintptr_t>(kInputObject) == 0 || Read<uintptr_t>(kInputReady) == 0) return false;
+    const bool rawActive = raw_input::IsActive();
+    const LONG cameraMode = Read<LONG>(kCameraMode);
+    const LONG pauseState = Read<LONG>(kPauseState);
+    const LONG mouseEnabled = Read<LONG>(kMouseEnabled);
+    const uintptr_t inputObject = Read<uintptr_t>(kInputObject);
+    const uintptr_t inputReady = Read<uintptr_t>(kInputReady);
     const uintptr_t local = Read<uintptr_t>(kLocalPlayer);
     const uintptr_t cameraOwner = Read<uintptr_t>(kCameraOwner);
-    if (local == 0 || cameraOwner != local) return false;
+    const uintptr_t rideTarget = local == 0 ? 0 : Read<uintptr_t>(local + kActorRideTargetOffset);
+    auto reason = visual_diagnostics::CameraSupportReason::Supported;
+    if (!rawActive) reason = visual_diagnostics::CameraSupportReason::RawInputInactive;
+    else if (cameraMode != 0) reason = visual_diagnostics::CameraSupportReason::CameraMode;
+    else if (pauseState != 0) reason = visual_diagnostics::CameraSupportReason::Paused;
+    else if (mouseEnabled == 0) reason = visual_diagnostics::CameraSupportReason::MouseDisabled;
+    else if (inputObject == 0) reason = visual_diagnostics::CameraSupportReason::InputObjectMissing;
+    else if (inputReady == 0) reason = visual_diagnostics::CameraSupportReason::InputReadyMissing;
+    else if (local == 0) reason = visual_diagnostics::CameraSupportReason::LocalPlayerMissing;
+    else if (cameraOwner != local) reason = visual_diagnostics::CameraSupportReason::CameraOwnerMismatch;
+    else if (rideTarget != 0) reason = visual_diagnostics::CameraSupportReason::MountedOrVehicle;
+    visual_diagnostics::SetCameraSupport(reason, cameraMode, pauseState, mouseEnabled,
+                                         inputObject, inputReady, local, cameraOwner, rideTarget);
+    if (reason != visual_diagnostics::CameraSupportReason::Supported) return false;
     // A non-null ride target covers the known vehicle/turret ownership cases.
-    if (Read<uintptr_t>(local + kActorRideTargetOffset) != 0) return false;
     *owner = local;
     return true;
 }
@@ -177,7 +192,14 @@ bool Install(bool enabled, bool freeRateMousePollAvailable, bool mouseScalingFix
 
 void EvaluateAndApplyForCurrentFrame() {
     ++g_frameSerial;
-    if (!g_enabled) return;
+    visual_diagnostics::RecordCameraEvaluation();
+    if (!g_enabled) {
+        visual_diagnostics::SetCameraSupport(
+            visual_diagnostics::CameraSupportReason::FeatureDisabled, 0, 0, 0,
+            0, 0, 0, 0, 0);
+        Invalidate();
+        return;
+    }
     uintptr_t owner = 0;
     if (!IsSupported(&owner)) { Invalidate(); return; }
     const raw_input::PredictionSnapshot snapshot = raw_input::GetPredictionSnapshot();

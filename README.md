@@ -56,11 +56,14 @@ mostra, em Hz:
 
 - pacotes aceitos de Raw Input;
 - chamadas autoritativas de `PollMouseInput`;
-- chamadas de `PollMouseInput` no render;
-- execuções da câmera visual;
+- chamadas do call site de câmera que dispara o polling de render (não é
+  rotulado como `Present`/FPS real);
+- chamadas do avaliador e frames em que a câmera visual foi realmente aplicada;
 - frames em que o yaw visual mudou;
 - atualizações do yaw oficial do jogador;
 - contagens Raw Input pendentes e recebidas no frame mais recente.
+- motivo exato de qualquer fallback, junto dos valores de modo, pausa, mouse,
+  objetos de input, jogador local, proprietário da câmera e ride target.
 
 Durante movimento contínuo, se as execuções/mudanças visuais acompanharem o
 FPS de render e ultrapassarem claramente as mudanças oficiais, o painel mostra
