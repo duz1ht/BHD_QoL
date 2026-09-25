@@ -195,7 +195,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     WNDCLASSW windowClass = {};
     windowClass.lpfnWndProc = WindowProc;
     windowClass.hInstance = instance;
-    windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    windowClass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
     windowClass.lpszClassName = className;
     if (!RegisterClassW(&windowClass)) return 1;
 
