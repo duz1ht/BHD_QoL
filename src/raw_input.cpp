@@ -6,7 +6,9 @@
 #include <cstring>
 
 #include "game_window.h"
+#include "high_rate_camera_rotation.h"
 #include "logger.h"
+#include "visual_diagnostics.h"
 
 namespace raw_input {
 namespace {
@@ -26,8 +28,17 @@ constexpr size_t kDetourSize = sizeof(kExpectedPollBytes);
 using PollMouseInputFn = void(__cdecl*)();
 using MouseDispatcherFn = void(__cdecl*)(WPARAM, LPARAM, UINT, int);
 
-volatile LONG g_accumX = 0;
-volatile LONG g_accumY = 0;
+volatile LONG g_logicAccumX = 0;
+volatile LONG g_logicAccumY = 0;
+volatile LONG g_renderAccumX = 0;
+volatile LONG g_renderAccumY = 0;
+volatile LONG g_lastRenderDeltaX = 0;
+volatile LONG g_lastRenderDeltaY = 0;
+volatile LONG g_totalRawX = 0;
+volatile LONG g_totalRawY = 0;
+volatile LONG g_logicCommittedRawX = 0;
+volatile LONG g_logicCommittedRawY = 0;
+volatile LONG g_logicPollSerial = 0;
 volatile LONG g_buttonState = 0;
 enum BackendState : LONG { kInactive = 0, kRecoveryPending = 1, kActive = 2 };
 volatile LONG g_backendState = kInactive;
@@ -38,9 +49,14 @@ volatile LONG g_startupLegacyFallbackLogged = 0;
 volatile LONG g_dropNextMovement = 0;
 volatile LONG g_droppedPackets = 0;
 volatile LONG g_reportCount = 0;
-volatile LONG g_pollCount = 0;
-volatile LONG g_intervalX = 0;
-volatile LONG g_intervalY = 0;
+volatile LONG g_logicPollCount = 0;
+volatile LONG g_renderPollCount = 0;
+volatile LONG g_intervalAcceptedX = 0;
+volatile LONG g_intervalAcceptedY = 0;
+volatile LONG g_intervalLogicX = 0;
+volatile LONG g_intervalLogicY = 0;
+volatile LONG g_intervalRenderX = 0;
+volatile LONG g_intervalRenderY = 0;
 volatile LONG g_absoluteReports = 0;
 volatile LONG g_sizeFailures = 0;
 volatile LONG g_readFailures = 0;
@@ -51,6 +67,7 @@ HWND g_window = nullptr;
 PollMouseInputFn g_legacyPoll = nullptr;
 HANDLE g_loggedDevices[16] = {};
 size_t g_loggedDeviceCount = 0;
+thread_local bool g_renderPollContext = false;
 
 bool WindowHasInputFocus(HWND* focusedWindow = nullptr) {
     const HWND focus = GetFocus();
@@ -96,8 +113,18 @@ void DispatchEvent(UINT message, WPARAM state, LPARAM position) {
 }
 
 void ClearInputState() {
-    InterlockedExchange(&g_accumX, 0);
-    InterlockedExchange(&g_accumY, 0);
+    high_rate_camera_rotation::Invalidate();
+    InterlockedExchange(&g_logicAccumX, 0);
+    InterlockedExchange(&g_logicAccumY, 0);
+    InterlockedExchange(&g_renderAccumX, 0);
+    InterlockedExchange(&g_renderAccumY, 0);
+    InterlockedExchange(&g_lastRenderDeltaX, 0);
+    InterlockedExchange(&g_lastRenderDeltaY, 0);
+    InterlockedExchange(&g_totalRawX, 0);
+    InterlockedExchange(&g_totalRawY, 0);
+    InterlockedExchange(&g_logicCommittedRawX, 0);
+    InterlockedExchange(&g_logicCommittedRawY, 0);
+    InterlockedExchange(&g_logicPollSerial, 0);
     InterlockedExchange(&g_buttonState, 0);
 }
 
@@ -192,8 +219,15 @@ void ProcessRawInput(HRAWINPUT handle) {
             const RAWMOUSE& mouse = input->data.mouse;
             if ((mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0) {
                 if (InterlockedExchange(&g_dropNextMovement, 0) == 0) {
-                    InterlockedExchangeAdd(&g_accumX, mouse.lLastX);
-                    InterlockedExchangeAdd(&g_accumY, mouse.lLastY);
+                    InterlockedExchangeAdd(&g_logicAccumX, mouse.lLastX);
+                    InterlockedExchangeAdd(&g_logicAccumY, mouse.lLastY);
+                    InterlockedExchangeAdd(&g_renderAccumX, mouse.lLastX);
+                    InterlockedExchangeAdd(&g_renderAccumY, mouse.lLastY);
+                    InterlockedExchangeAdd(&g_totalRawX, mouse.lLastX);
+                    InterlockedExchangeAdd(&g_totalRawY, mouse.lLastY);
+                    InterlockedExchangeAdd(&g_intervalAcceptedX, mouse.lLastX);
+                    InterlockedExchangeAdd(&g_intervalAcceptedY, mouse.lLastY);
+                    visual_diagnostics::RecordRawReport(mouse.lLastX, mouse.lLastY);
                     UpdateVirtualCursor(mouse.lLastX, mouse.lLastY);
                 }
             } else {
@@ -309,6 +343,7 @@ void EnsureInitialized() {
 extern "C" void __cdecl RawPollMouseInput() {
     EnsureInitialized();
     if (InterlockedCompareExchange(&g_backendState, kInactive, kInactive) != kActive) {
+        if (g_renderPollContext) return;
         if (g_window == nullptr ||
             InterlockedCompareExchange(&g_activatedOnce, 0, 0) == 0) {
             if (g_window != nullptr &&
@@ -324,28 +359,50 @@ extern "C" void __cdecl RawPollMouseInput() {
     }
 
     *reinterpret_cast<volatile LONG*>(kMouseState) = static_cast<LONG>(CurrentState());
-    const LONG x = InterlockedExchange(&g_accumX, 0);
-    const LONG y = InterlockedExchange(&g_accumY, 0);
-    InterlockedExchangeAdd(&g_intervalX, x);
-    InterlockedExchangeAdd(&g_intervalY, y);
+    volatile LONG* accumX = g_renderPollContext ? &g_renderAccumX : &g_logicAccumX;
+    volatile LONG* accumY = g_renderPollContext ? &g_renderAccumY : &g_logicAccumY;
+    const LONG x = InterlockedExchange(accumX, 0);
+    const LONG y = InterlockedExchange(accumY, 0);
     *reinterpret_cast<volatile LONG*>(kRelativeX) = x;
     *reinterpret_cast<volatile LONG*>(kRelativeY) = y;
-    InterlockedIncrement(&g_pollCount);
+    if (g_renderPollContext) {
+        InterlockedExchangeAdd(&g_intervalRenderX, x);
+        InterlockedExchangeAdd(&g_intervalRenderY, y);
+        InterlockedExchange(&g_lastRenderDeltaX, x);
+        InterlockedExchange(&g_lastRenderDeltaY, y);
+        InterlockedIncrement(&g_renderPollCount);
+        visual_diagnostics::RecordRenderPoll(x, y);
+        return;
+    }
+    InterlockedExchangeAdd(&g_intervalLogicX, x);
+    InterlockedExchangeAdd(&g_intervalLogicY, y);
+    InterlockedExchangeAdd(&g_logicCommittedRawX, x);
+    InterlockedExchangeAdd(&g_logicCommittedRawY, y);
+    InterlockedIncrement(&g_logicPollSerial);
+    InterlockedIncrement(&g_logicPollCount);
+    visual_diagnostics::RecordLogicPoll(x, y);
     const DWORD now = GetTickCount();
     if (now - g_lastStatisticsTick >= g_statisticsIntervalMs) {
         const LONG reports = InterlockedExchange(&g_reportCount, 0);
-        const LONG polls = InterlockedExchange(&g_pollCount, 0);
-        const LONG totalX = InterlockedExchange(&g_intervalX, 0);
-        const LONG totalY = InterlockedExchange(&g_intervalY, 0);
+        const LONG logicPolls = InterlockedExchange(&g_logicPollCount, 0);
+        const LONG renderPolls = InterlockedExchange(&g_renderPollCount, 0);
+        const LONG acceptedX = InterlockedExchange(&g_intervalAcceptedX, 0);
+        const LONG acceptedY = InterlockedExchange(&g_intervalAcceptedY, 0);
+        const LONG logicX = InterlockedExchange(&g_intervalLogicX, 0);
+        const LONG logicY = InterlockedExchange(&g_intervalLogicY, 0);
+        const LONG renderX = InterlockedExchange(&g_intervalRenderX, 0);
+        const LONG renderY = InterlockedExchange(&g_intervalRenderY, 0);
         const LONG dropped = InterlockedExchange(&g_droppedPackets, 0);
         const LONG absolute = InterlockedExchange(&g_absoluteReports, 0);
         const LONG sizeFailures = InterlockedExchange(&g_sizeFailures, 0);
         const LONG readFailures = InterlockedExchange(&g_readFailures, 0);
         g_lastStatisticsTick = now;
         logger::Log("INFO", "RawInput.Stats",
-                    "interval_ms=%lu reports=%ld polls=%ld total_dx=%ld total_dy=%ld dropped=%ld "
+                    "interval_ms=%lu reports=%ld logic_polls=%ld render_polls=%ld accepted_dx=%ld accepted_dy=%ld "
+                    "logic_dx=%ld logic_dy=%ld render_dx=%ld render_dy=%ld dropped=%ld "
                     "absolute_ignored=%ld size_failures=%ld read_failures=%ld active=%ld",
-                    g_statisticsIntervalMs, reports, polls, totalX, totalY, dropped, absolute,
+                    g_statisticsIntervalMs, reports, logicPolls, renderPolls, acceptedX, acceptedY,
+                    logicX, logicY, renderX, renderY, dropped, absolute,
                     sizeFailures, readFailures,
                     InterlockedCompareExchange(&g_backendState, kInactive, kInactive) == kActive);
         game_window::HandleStatisticsInterval();
@@ -408,7 +465,10 @@ bool Install(const Settings& settings) {
     return true;
 }
 
-bool AttachWindow(HWND window) { return RegisterForWindow(window); }
+bool AttachWindow(HWND window) {
+    visual_diagnostics::SetGameWindow(window);
+    return RegisterForWindow(window);
+}
 void HandleRawInput(HRAWINPUT input) { ProcessRawInput(input); }
 void HandleFocusLost() {
     if (!g_enabled) return;
@@ -425,4 +485,35 @@ void HandleDestroy() {
     g_window = nullptr;
 }
 bool IsEnabled() { return g_enabled; }
+bool IsActive() {
+    const bool active = g_enabled &&
+        InterlockedCompareExchange(&g_backendState, kInactive, kInactive) == kActive;
+    visual_diagnostics::SetRawActive(active);
+    return active;
+}
+
+bool PollForRenderFrame() {
+    if (!IsActive()) return false;
+    struct ContextGuard {
+        ContextGuard() { g_renderPollContext = true; }
+        ~ContextGuard() { g_renderPollContext = false; }
+    } guard;
+    RawPollMouseInput();
+    return true;
+}
+
+PredictionSnapshot GetPredictionSnapshot() {
+    PredictionSnapshot snapshot = {};
+    snapshot.totalX = static_cast<uint32_t>(InterlockedCompareExchange(&g_totalRawX, 0, 0));
+    snapshot.totalY = static_cast<uint32_t>(InterlockedCompareExchange(&g_totalRawY, 0, 0));
+    snapshot.committedX = static_cast<uint32_t>(InterlockedCompareExchange(&g_logicCommittedRawX, 0, 0));
+    snapshot.committedY = static_cast<uint32_t>(InterlockedCompareExchange(&g_logicCommittedRawY, 0, 0));
+    snapshot.logicPollSerial = static_cast<uint32_t>(InterlockedCompareExchange(&g_logicPollSerial, 0, 0));
+    return snapshot;
+}
+
+void GetLastRenderDelta(LONG* x, LONG* y) {
+    if (x != nullptr) *x = InterlockedCompareExchange(&g_lastRenderDeltaX, 0, 0);
+    if (y != nullptr) *y = InterlockedCompareExchange(&g_lastRenderDeltaY, 0, 0);
+}
 }  // namespace raw_input
