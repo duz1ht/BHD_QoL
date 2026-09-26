@@ -42,6 +42,10 @@ constexpr int16_t kPitchPositive = 259;
 constexpr int16_t kPitchNegative = 260;
 constexpr int16_t kYawPositive = 263;
 constexpr int16_t kYawNegative = 264;
+// Mouse binding definitions enqueue command IDs. The 259/260/263/264 values
+// are the later player-action IDs produced when those commands are dispatched.
+constexpr int16_t kMouseLookPitchCommand = 164;
+constexpr int16_t kMouseLookYawCommand = 166;
 using QueryFn = int(__cdecl*)();
 
 bool g_enabled = false;
@@ -122,6 +126,8 @@ struct LookActions {
 
 void AddAction(LookActions* actions, int16_t action, int32_t value) {
     switch (action) {
+        case kMouseLookYawCommand: actions->yaw += value; break;
+        case kMouseLookPitchCommand: actions->pitch += value; break;
         case kYawPositive: actions->yaw += value; break;
         case kYawNegative: actions->yaw -= value; break;
         case kPitchPositive: actions->pitch += value; break;
@@ -131,7 +137,8 @@ void AddAction(LookActions* actions, int16_t action, int32_t value) {
 }
 
 bool IsLookAction(int16_t action) {
-    return action == kPitchPositive || action == kPitchNegative ||
+    return action == kMouseLookPitchCommand || action == kMouseLookYawCommand ||
+           action == kPitchPositive || action == kPitchNegative ||
            action == kYawPositive || action == kYawNegative;
 }
 
