@@ -32,6 +32,10 @@ struct FractionState {
 };
 
 FractionState g_state = {};
+volatile LONG g_traceSerial = 0;
+volatile LONG g_traceInput[2] = {};
+volatile LONG g_traceOutput[2] = {};
+volatile LONG g_traceScale = 0;
 
 int32_t OriginalScale(int32_t delta, int32_t scale) {
   const uint64_t product =
@@ -41,28 +45,34 @@ int32_t OriginalScale(int32_t delta, int32_t scale) {
 
 extern "C" int32_t __stdcall ScaleWithRemainder(int32_t delta, int32_t scale,
                                                 int32_t axis) {
+  const int safeAxis = axis == 0 ? 0 : 1;
   const int32_t baseScale = static_cast<int32_t>(
       static_cast<uint32_t>(
           *reinterpret_cast<volatile int32_t *>(kMouseScaleAddress))
       << 11);
   const bool needsCorrection = scale != baseScale && (scale & 0xFFFF) != 0;
+  int32_t output = 0;
   if (!needsCorrection) {
     Reset();
-    return OriginalScale(delta, scale);
+    output = OriginalScale(delta, scale);
+  } else {
+    if (!g_state.active || g_state.scale != scale) {
+      g_state.scale = scale;
+      g_state.remainder[0] = 0;
+      g_state.remainder[1] = 0;
+      g_state.active = true;
+    }
+
+    const int64_t value =
+        static_cast<int64_t>(delta) * scale + g_state.remainder[safeAxis];
+    output = static_cast<int32_t>(value / 65536);
+    g_state.remainder[safeAxis] = value - static_cast<int64_t>(output) * 65536;
   }
 
-  if (!g_state.active || g_state.scale != scale) {
-    g_state.scale = scale;
-    g_state.remainder[0] = 0;
-    g_state.remainder[1] = 0;
-    g_state.active = true;
-  }
-
-  const int safeAxis = axis == 0 ? 0 : 1;
-  const int64_t value =
-      static_cast<int64_t>(delta) * scale + g_state.remainder[safeAxis];
-  const int32_t output = static_cast<int32_t>(value / 65536);
-  g_state.remainder[safeAxis] = value - static_cast<int64_t>(output) * 65536;
+  InterlockedExchange(&g_traceInput[safeAxis], delta);
+  InterlockedExchange(&g_traceOutput[safeAxis], output);
+  InterlockedExchange(&g_traceScale, scale);
+  if (safeAxis == 1) InterlockedIncrement(&g_traceSerial);
   return output;
 }
 
@@ -220,6 +230,17 @@ int32_t PreviewScale(int32_t delta, int32_t scale, int32_t axis) {
   const int64_t value =
       static_cast<int64_t>(delta) * scale + g_state.remainder[safeAxis];
   return static_cast<int32_t>(value / 65536);
+}
+
+void GetTraceSnapshot(TraceSnapshot* snapshot) {
+  if (snapshot == nullptr) return;
+  snapshot->serial = static_cast<unsigned long>(
+      InterlockedCompareExchange(&g_traceSerial, 0, 0));
+  snapshot->inputX = InterlockedCompareExchange(&g_traceInput[0], 0, 0);
+  snapshot->inputY = InterlockedCompareExchange(&g_traceInput[1], 0, 0);
+  snapshot->outputX = InterlockedCompareExchange(&g_traceOutput[0], 0, 0);
+  snapshot->outputY = InterlockedCompareExchange(&g_traceOutput[1], 0, 0);
+  snapshot->scale = InterlockedCompareExchange(&g_traceScale, 0, 0);
 }
 
 bool Install(bool enabled) {

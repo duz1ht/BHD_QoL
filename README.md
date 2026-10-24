@@ -63,12 +63,17 @@ Enabled=0
 RawInputStatisticsIntervalMs=5000
 ```
 
-`HighFrequencyCamera` converts pending Raw Input with the game's current mouse
-sensitivity, vertical inversion, scoped-view divisor, and horizontal filter.
-The temporary visual angles are restored immediately after the camera is built;
-the simulation consumes each movement once through its original path. The
-feature currently applies to the local player in first person. Third-person,
-vehicle, and spectator cameras retain their native behavior.
+`RawMouseInput` receives mouse packets on a dedicated message thread so movement
+can reach presentation frames between the game's fixed simulation updates. Each
+`WM_INPUT` event is read directly and then `GetRawInputBuffer` drains any reports
+that accumulated in the queue, which prevents high polling-rate mice from being
+limited by one-message-at-a-time processing.
+`HighFrequencyCamera` projects the game's native two-update mouse smoothing, then
+uses the current sensitivity, vertical inversion, and scoped-view divisor. The
+temporary visual angles are restored immediately after the camera is built; the
+simulation consumes each movement once through its original path. The feature
+currently applies to the local player in first person. Third-person, vehicle,
+and spectator cameras retain their native behavior.
 
 ## Building
 

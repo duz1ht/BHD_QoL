@@ -7,6 +7,7 @@
 
 #include "game_window.h"
 #include "logger.h"
+#include "raw_input_math.h"
 
 namespace raw_input {
 namespace {
@@ -20,6 +21,12 @@ constexpr uintptr_t kRelativeX = 0x00F655EC;
 constexpr uintptr_t kRelativeY = 0x00F655F0;
 constexpr uintptr_t kScreenWidth = 0x009F72C0;
 constexpr uintptr_t kScreenHeight = 0x009F72C4;
+constexpr uintptr_t kCameraYaw = 0x007F2DE4;
+constexpr uintptr_t kCameraPitch = 0x007F2DE8;
+constexpr uintptr_t kMouseSubsteps = 0x00A02248;
+constexpr uintptr_t kPreviousXTerm = 0x009F3750;
+constexpr uintptr_t kPreviousYTerm = 0x009FB280;
+constexpr wchar_t kInputWindowClass[] = L"BHD_QoL_RawInputSink";
 
 constexpr unsigned char kExpectedPollBytes[] = {0x83, 0xEC, 0x24, 0x56, 0x8B, 0x35};
 constexpr size_t kDetourSize = sizeof(kExpectedPollBytes);
@@ -39,6 +46,19 @@ volatile LONG g_dropNextMovement = 0;
 volatile LONG g_droppedPackets = 0;
 volatile LONG g_reportCount = 0;
 volatile LONG g_pollCount = 0;
+volatile LONG g_pollSerial = 0;
+volatile LONG g_rawPacketSerial = 0;
+volatile LONG g_directPacketSerial = 0;
+volatile LONG g_bufferedPacketSerial = 0;
+volatile LONG g_bufferDrainSerial = 0;
+volatile LONG g_bufferReadFailures = 0;
+volatile LONG g_lastConsumedX = 0;
+volatile LONG g_lastConsumedY = 0;
+volatile LONG g_cameraYawAtPoll = 0;
+volatile LONG g_cameraPitchAtPoll = 0;
+alignas(8) volatile LONG64 g_lastPollCounter = 0;
+alignas(8) volatile LONG64 g_pollIntervalCounter = 0;
+LONGLONG g_performanceFrequency = 0;
 volatile LONG g_intervalX = 0;
 volatile LONG g_intervalY = 0;
 volatile LONG g_absoluteReports = 0;
@@ -48,9 +68,79 @@ bool g_enabled = false;
 DWORD g_statisticsIntervalMs = 5000;
 DWORD g_lastStatisticsTick = 0;
 HWND g_window = nullptr;
+HWND g_inputWindow = nullptr;
+HANDLE g_inputReadyEvent = nullptr;
+volatile LONG g_inputThreadStarted = 0;
 PollMouseInputFn g_legacyPoll = nullptr;
 HANDLE g_loggedDevices[16] = {};
 size_t g_loggedDeviceCount = 0;
+constexpr size_t kRawInputBufferSize = 64 * 1024;
+alignas(8) unsigned char g_rawInputBuffer[kRawInputBufferSize] = {};
+
+void ProcessRawInput(HRAWINPUT handle);
+void DrainRawInputQueue();
+
+LRESULT CALLBACK InputWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (message == WM_INPUT) {
+        ProcessRawInput(reinterpret_cast<HRAWINPUT>(lParam));
+        DrainRawInputQueue();
+        return DefWindowProcW(window, message, wParam, lParam);
+    }
+    if (message == WM_CLOSE) {
+        DestroyWindow(window);
+        return 0;
+    }
+    if (message == WM_DESTROY) {
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcW(window, message, wParam, lParam);
+}
+
+DWORD WINAPI InputThreadProc(void*) {
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    WNDCLASSW windowClass = {};
+    windowClass.lpfnWndProc = InputWindowProc;
+    windowClass.hInstance = instance;
+    windowClass.lpszClassName = kInputWindowClass;
+    if (RegisterClassW(&windowClass) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+        if (g_inputReadyEvent != nullptr) SetEvent(g_inputReadyEvent);
+        return 1;
+    }
+
+    g_inputWindow = CreateWindowExW(0, kInputWindowClass, L"", 0, 0, 0, 0, 0,
+                                    HWND_MESSAGE, nullptr, instance, nullptr);
+    if (g_inputReadyEvent != nullptr) SetEvent(g_inputReadyEvent);
+    if (g_inputWindow == nullptr) return 2;
+
+    MSG message = {};
+    while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+    g_inputWindow = nullptr;
+    return 0;
+}
+
+bool EnsureInputThread() {
+    if (g_inputWindow != nullptr) return true;
+    if (InterlockedCompareExchange(&g_inputThreadStarted, 1, 0) == 0) {
+        g_inputReadyEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (g_inputReadyEvent == nullptr) return false;
+        HANDLE thread = CreateThread(nullptr, 0, InputThreadProc, nullptr, 0, nullptr);
+        if (thread == nullptr) {
+            CloseHandle(g_inputReadyEvent);
+            g_inputReadyEvent = nullptr;
+            return false;
+        }
+        CloseHandle(thread);
+    }
+    if (g_inputReadyEvent == nullptr ||
+        WaitForSingleObject(g_inputReadyEvent, 3000) != WAIT_OBJECT_0) {
+        return false;
+    }
+    return g_inputWindow != nullptr;
+}
 
 bool WindowHasInputFocus(HWND* focusedWindow = nullptr) {
     const HWND focus = GetFocus();
@@ -86,6 +176,20 @@ void UpdateVirtualCursor(LONG deltaX, LONG deltaY) {
 }
 
 void DispatchEvent(UINT message, WPARAM state, LPARAM position) {
+    DWORD gameWindowThread = 0;
+    if (g_window != nullptr) {
+        gameWindowThread = GetWindowThreadProcessId(g_window, nullptr);
+    }
+    if (gameWindowThread != 0 && gameWindowThread != GetCurrentThreadId()) {
+        const BOOL posted = PostMessageW(g_window, message, state, position);
+        logger::Log(posted ? "INFO" : "ERROR", "RawInput.Dispatch",
+                    "posted message=0x%04X state=0x%04lX x=%d y=%d error=%lu",
+                    message, static_cast<unsigned long>(state),
+                    static_cast<int>(static_cast<short>(LOWORD(position))),
+                    static_cast<int>(static_cast<short>(HIWORD(position))),
+                    posted ? ERROR_SUCCESS : GetLastError());
+        return;
+    }
     const auto dispatch = reinterpret_cast<MouseDispatcherFn>(kMouseDispatcher);
     dispatch(state, position, message, 1);
     logger::Log("INFO", "RawInput.Dispatch",
@@ -165,6 +269,42 @@ void LogDevice(HANDLE device) {
     }
 }
 
+void ProcessRawInputRecord(const RAWINPUT* input, bool buffered) {
+    if (input == nullptr || input->header.dwType != RIM_TYPEMOUSE ||
+        InterlockedCompareExchange(&g_backendState, kInactive, kInactive) != kActive) {
+        return;
+    }
+
+    LogDevice(input->header.hDevice);
+    InterlockedIncrement(&g_reportCount);
+    const RAWMOUSE& mouse = input->data.mouse;
+    if ((mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0) {
+        InterlockedIncrement(&g_rawPacketSerial);
+        InterlockedIncrement(buffered ? &g_bufferedPacketSerial : &g_directPacketSerial);
+        if (InterlockedExchange(&g_dropNextMovement, 0) == 0) {
+            InterlockedExchangeAdd(&g_accumX, mouse.lLastX);
+            InterlockedExchangeAdd(&g_accumY, mouse.lLastY);
+            UpdateVirtualCursor(mouse.lLastX, mouse.lLastY);
+        }
+    } else {
+        InterlockedIncrement(&g_absoluteReports);
+    }
+
+    SetButton(mouse.usButtonFlags, RI_MOUSE_LEFT_BUTTON_DOWN, RI_MOUSE_LEFT_BUTTON_UP,
+              MK_LBUTTON, WM_LBUTTONDOWN, WM_LBUTTONUP);
+    SetButton(mouse.usButtonFlags, RI_MOUSE_RIGHT_BUTTON_DOWN, RI_MOUSE_RIGHT_BUTTON_UP,
+              MK_RBUTTON, WM_RBUTTONDOWN, WM_RBUTTONUP);
+    SetButton(mouse.usButtonFlags, RI_MOUSE_MIDDLE_BUTTON_DOWN, RI_MOUSE_MIDDLE_BUTTON_UP,
+              MK_MBUTTON, WM_MBUTTONDOWN, WM_MBUTTONUP);
+    if ((mouse.usButtonFlags & RI_MOUSE_WHEEL) != 0) {
+        const WPARAM wheel = MAKEWPARAM(CurrentState(), static_cast<USHORT>(mouse.usButtonData));
+        DispatchEvent(WM_MOUSEWHEEL, wheel, CurrentPosition());
+        logger::Log("INFO", "RawInput.Wheel", "delta=%d state=0x%04lX",
+                    static_cast<short>(mouse.usButtonData),
+                    static_cast<unsigned long>(CurrentState()));
+    }
+}
+
 void ProcessRawInput(HRAWINPUT handle) {
     UINT size = 0;
     if (GetRawInputData(handle, RID_INPUT, nullptr, &size, sizeof(RAWINPUTHEADER)) != 0 ||
@@ -185,35 +325,7 @@ void ProcessRawInput(HRAWINPUT handle) {
     const UINT read = GetRawInputData(handle, RID_INPUT, buffer, &size, sizeof(RAWINPUTHEADER));
     if (read == size) {
         const RAWINPUT* input = reinterpret_cast<const RAWINPUT*>(buffer);
-        if (input->header.dwType == RIM_TYPEMOUSE &&
-            InterlockedCompareExchange(&g_backendState, kInactive, kInactive) == kActive) {
-            LogDevice(input->header.hDevice);
-            InterlockedIncrement(&g_reportCount);
-            const RAWMOUSE& mouse = input->data.mouse;
-            if ((mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0) {
-                if (InterlockedExchange(&g_dropNextMovement, 0) == 0) {
-                    InterlockedExchangeAdd(&g_accumX, mouse.lLastX);
-                    InterlockedExchangeAdd(&g_accumY, mouse.lLastY);
-                    UpdateVirtualCursor(mouse.lLastX, mouse.lLastY);
-                }
-            } else {
-                InterlockedIncrement(&g_absoluteReports);
-            }
-
-            SetButton(mouse.usButtonFlags, RI_MOUSE_LEFT_BUTTON_DOWN, RI_MOUSE_LEFT_BUTTON_UP,
-                      MK_LBUTTON, WM_LBUTTONDOWN, WM_LBUTTONUP);
-            SetButton(mouse.usButtonFlags, RI_MOUSE_RIGHT_BUTTON_DOWN, RI_MOUSE_RIGHT_BUTTON_UP,
-                      MK_RBUTTON, WM_RBUTTONDOWN, WM_RBUTTONUP);
-            SetButton(mouse.usButtonFlags, RI_MOUSE_MIDDLE_BUTTON_DOWN, RI_MOUSE_MIDDLE_BUTTON_UP,
-                      MK_MBUTTON, WM_MBUTTONDOWN, WM_MBUTTONUP);
-            if ((mouse.usButtonFlags & RI_MOUSE_WHEEL) != 0) {
-                const WPARAM wheel = MAKEWPARAM(CurrentState(), static_cast<USHORT>(mouse.usButtonData));
-                DispatchEvent(WM_MOUSEWHEEL, wheel, CurrentPosition());
-                logger::Log("INFO", "RawInput.Wheel", "delta=%d state=0x%04lX",
-                            static_cast<short>(mouse.usButtonData),
-                            static_cast<unsigned long>(CurrentState()));
-            }
-        }
+        ProcessRawInputRecord(input, false);
     } else {
         InterlockedIncrement(&g_droppedPackets);
         InterlockedIncrement(&g_readFailures);
@@ -222,6 +334,31 @@ void ProcessRawInput(HRAWINPUT handle) {
     }
 
     if (buffer != stackBuffer) HeapFree(GetProcessHeap(), 0, buffer);
+}
+
+void DrainRawInputQueue() {
+    for (;;) {
+        UINT bufferSize = static_cast<UINT>(sizeof(g_rawInputBuffer));
+        const UINT count = GetRawInputBuffer(
+            reinterpret_cast<PRAWINPUT>(g_rawInputBuffer), &bufferSize,
+            sizeof(RAWINPUTHEADER));
+        if (count == 0) return;
+        if (count == static_cast<UINT>(-1)) {
+            InterlockedIncrement(&g_bufferReadFailures);
+            InterlockedIncrement(&g_droppedPackets);
+            logger::Log("ERROR", "RawInput",
+                        "GetRawInputBuffer failed: buffer_size=%u error=%lu",
+                        bufferSize, GetLastError());
+            return;
+        }
+
+        InterlockedIncrement(&g_bufferDrainSerial);
+        PRAWINPUT input = reinterpret_cast<PRAWINPUT>(g_rawInputBuffer);
+        for (UINT index = 0; index < count; ++index) {
+            ProcessRawInputRecord(input, true);
+            input = NEXTRAWINPUTBLOCK(input);
+        }
+    }
 }
 
 void SuspendInput() {
@@ -276,17 +413,36 @@ bool RegisterForWindow(HWND window) {
     if (!g_enabled) return true;
     if (g_window == window && InterlockedCompareExchange(&g_registered, 0, 0)) return true;
     if (window == nullptr || !IsWindow(window)) return false;
-    g_window = window;
-    RAWINPUTDEVICE device = {0x01, 0x02, RIDEV_NOLEGACY | RIDEV_CAPTUREMOUSE, window};
-    if (!RegisterRawInputDevices(&device, 1, sizeof(device))) {
-        logger::Log("ERROR", "RawInput",
-                    "RegisterRawInputDevices flags=NOLEGACY|CAPTUREMOUSE failed: error=%lu",
-                    GetLastError());
+    if (!EnsureInputThread()) {
+        logger::Log("ERROR", "RawInput", "dedicated input window was not available");
         return false;
+    }
+    g_window = window;
+    RAWINPUTDEVICE device = {
+        0x01, 0x02,
+        RIDEV_NOLEGACY | RIDEV_CAPTUREMOUSE | RIDEV_INPUTSINK,
+        g_inputWindow,
+    };
+    if (!RegisterRawInputDevices(&device, 1, sizeof(device))) {
+        const DWORD captureError = GetLastError();
+        device.dwFlags = RIDEV_NOLEGACY | RIDEV_INPUTSINK;
+        if (!RegisterRawInputDevices(&device, 1, sizeof(device))) {
+            logger::Log("ERROR", "RawInput",
+                        "dedicated RegisterRawInputDevices failed: capture_error=%lu "
+                        "fallback_error=%lu",
+                        captureError, GetLastError());
+            return false;
+        }
+        logger::Log("WARN", "RawInput",
+                    "CAPTUREMOUSE registration failed; INPUTSINK fallback active error=%lu",
+                    captureError);
     }
     InterlockedExchange(&g_registered, 1);
     InterlockedExchange(&g_backendState, kRecoveryPending);
-    logger::Log("INFO", "RawInput", "mouse registered; state=recovery_pending");
+    logger::Log("INFO", "RawInput",
+                "mouse registered on dedicated input thread hwnd=0x%08lX; "
+                "state=recovery_pending",
+                reinterpret_cast<unsigned long>(g_inputWindow));
     return true;
 }
 
@@ -307,6 +463,7 @@ void EnsureInitialized() {
 }
 
 extern "C" void __cdecl RawPollMouseInput() {
+    InterlockedIncrement(&g_pollSerial);
     EnsureInitialized();
     if (InterlockedCompareExchange(&g_backendState, kInactive, kInactive) != kActive) {
         if (g_window == nullptr ||
@@ -324,8 +481,26 @@ extern "C" void __cdecl RawPollMouseInput() {
     }
 
     *reinterpret_cast<volatile LONG*>(kMouseState) = static_cast<LONG>(CurrentState());
+    LARGE_INTEGER pollNow = {};
+    if (QueryPerformanceCounter(&pollNow)) {
+        const LONG64 previousPoll = InterlockedExchange64(
+            &g_lastPollCounter, pollNow.QuadPart);
+        const LONG64 measuredInterval = pollNow.QuadPart - previousPoll;
+        if (previousPoll > 0 && measuredInterval > 0 &&
+            (g_performanceFrequency <= 0 ||
+             (measuredInterval >= g_performanceFrequency / 250 &&
+              measuredInterval <= g_performanceFrequency / 25))) {
+            InterlockedExchange64(&g_pollIntervalCounter, measuredInterval);
+        }
+    }
+    InterlockedExchange(&g_cameraYawAtPoll,
+                        *reinterpret_cast<volatile LONG*>(kCameraYaw));
+    InterlockedExchange(&g_cameraPitchAtPoll,
+                        *reinterpret_cast<volatile LONG*>(kCameraPitch));
     const LONG x = InterlockedExchange(&g_accumX, 0);
     const LONG y = InterlockedExchange(&g_accumY, 0);
+    InterlockedExchange(&g_lastConsumedX, x);
+    InterlockedExchange(&g_lastConsumedY, y);
     InterlockedExchangeAdd(&g_intervalX, x);
     InterlockedExchangeAdd(&g_intervalY, y);
     *reinterpret_cast<volatile LONG*>(kRelativeX) = x;
@@ -398,6 +573,19 @@ bool Install(const Settings& settings) {
     }
     logger::Log("INFO", "RawInput", "feature enabled");
     g_enabled = true;
+    LARGE_INTEGER frequency = {};
+    if (QueryPerformanceFrequency(&frequency)) {
+        g_performanceFrequency = frequency.QuadPart;
+        InterlockedExchange64(&g_pollIntervalCounter,
+                              (frequency.QuadPart * 16) / 1000);
+    }
+    if (!EnsureInputThread()) {
+        g_enabled = false;
+        logger::Log("ERROR", "RawInput",
+                    "dedicated input thread initialization failed: error=%lu",
+                    GetLastError());
+        return false;
+    }
     g_statisticsIntervalMs = settings.statisticsIntervalMs;
     g_lastStatisticsTick = GetTickCount();
     if (!WriteDetour()) {
@@ -423,6 +611,7 @@ void HandleDestroy() {
     SuspendInput();
     UnregisterRawInput();
     g_window = nullptr;
+    if (g_inputWindow != nullptr) PostMessageW(g_inputWindow, WM_CLOSE, 0, 0);
 }
 bool IsEnabled() { return g_enabled; }
 bool GetPendingMovement(LONG* x, LONG* y) {
@@ -433,5 +622,61 @@ bool GetPendingMovement(LONG* x, LONG* y) {
     *x = InterlockedCompareExchange(&g_accumX, 0, 0);
     *y = InterlockedCompareExchange(&g_accumY, 0, 0);
     return true;
+}
+bool GetProjectedNativeMovement(LONG* x, LONG* y, uint32_t* phaseQ16) {
+    if (x == nullptr || y == nullptr || !g_enabled ||
+        InterlockedCompareExchange(&g_backendState, kInactive, kInactive) != kActive) {
+        return false;
+    }
+    int divisor = *reinterpret_cast<const volatile int*>(kMouseSubsteps);
+    if (divisor <= 0) divisor = 1;
+    const LONG pendingX = InterlockedCompareExchange(&g_accumX, 0, 0);
+    const LONG pendingY = InterlockedCompareExchange(&g_accumY, 0, 0);
+    uint32_t phase = 0x10000U;
+    const LONG64 lastPoll = InterlockedCompareExchange64(&g_lastPollCounter, 0, 0);
+    LONG64 interval = InterlockedCompareExchange64(&g_pollIntervalCounter, 0, 0);
+    LARGE_INTEGER now = {};
+    if (lastPoll > 0 && interval > 0 && QueryPerformanceCounter(&now)) {
+        LONG64 elapsed = now.QuadPart - lastPoll;
+        if (elapsed < 0) elapsed = 0;
+        if (elapsed < interval) {
+            phase = static_cast<uint32_t>((elapsed * 0x10000) / interval);
+        }
+    }
+    *x = ProjectPresentationAxis(
+        pendingX, *reinterpret_cast<const volatile LONG*>(kPreviousXTerm), divisor, phase);
+    *y = ProjectPresentationAxis(
+        pendingY, *reinterpret_cast<const volatile LONG*>(kPreviousYTerm), divisor, phase);
+    if (phaseQ16 != nullptr) *phaseQ16 = phase;
+    return true;
+}
+void GetTraceCounters(unsigned long* pollSerial, unsigned long* rawPacketSerial) {
+    if (pollSerial != nullptr) {
+        *pollSerial = static_cast<unsigned long>(
+            InterlockedCompareExchange(&g_pollSerial, 0, 0));
+    }
+    if (rawPacketSerial != nullptr) {
+        *rawPacketSerial = static_cast<unsigned long>(
+            InterlockedCompareExchange(&g_rawPacketSerial, 0, 0));
+    }
+}
+void GetTraceSnapshot(TraceSnapshot* snapshot) {
+    if (snapshot == nullptr) return;
+    snapshot->pollSerial = static_cast<unsigned long>(
+        InterlockedCompareExchange(&g_pollSerial, 0, 0));
+    snapshot->rawPacketSerial = static_cast<unsigned long>(
+        InterlockedCompareExchange(&g_rawPacketSerial, 0, 0));
+    snapshot->directPacketSerial = static_cast<unsigned long>(
+        InterlockedCompareExchange(&g_directPacketSerial, 0, 0));
+    snapshot->bufferedPacketSerial = static_cast<unsigned long>(
+        InterlockedCompareExchange(&g_bufferedPacketSerial, 0, 0));
+    snapshot->bufferDrainSerial = static_cast<unsigned long>(
+        InterlockedCompareExchange(&g_bufferDrainSerial, 0, 0));
+    snapshot->bufferReadFailures = static_cast<unsigned long>(
+        InterlockedCompareExchange(&g_bufferReadFailures, 0, 0));
+    snapshot->consumedX = InterlockedCompareExchange(&g_lastConsumedX, 0, 0);
+    snapshot->consumedY = InterlockedCompareExchange(&g_lastConsumedY, 0, 0);
+    snapshot->cameraYawAtPoll = InterlockedCompareExchange(&g_cameraYawAtPoll, 0, 0);
+    snapshot->cameraPitchAtPoll = InterlockedCompareExchange(&g_cameraPitchAtPoll, 0, 0);
 }
 }  // namespace raw_input

@@ -15,6 +15,9 @@
 
 #include "logger.h"
 #include "high_frequency_camera.h"
+#include "camera_trace.h"
+#include "raw_input.h"
+#include "mouse_scaling_fix.h"
 
 namespace camera_fov {
 namespace {
@@ -112,19 +115,60 @@ void __cdecl HookBuildCamera(void *destinationCamera, void *sourceCamera) {
     int32_t originalYaw = 0;
     int32_t originalPitch = 0;
     bool overrideLook = false;
-    if (caller == g_moduleBase + kMainRendererReturnRva && sourceCamera != nullptr) {
+    const bool mainRendererCamera = caller == g_moduleBase + kMainRendererReturnRva;
+    if (mainRendererCamera) {
+        camera_trace::UpdateHotkey();
+    }
+    high_frequency_camera::ApplyResult applyResult = {};
+    int32_t previewYaw = 0;
+    int32_t previewPitch = 0;
+    if (mainRendererCamera && sourceCamera != nullptr) {
         auto* camera = static_cast<unsigned char*>(sourceCamera);
-        originalYaw = *reinterpret_cast<int32_t*>(camera + 0x0C);
-        originalPitch = *reinterpret_cast<int32_t*>(camera + 0x10);
-        overrideLook = high_frequency_camera::Apply(sourceCamera);
+        originalYaw = *reinterpret_cast<int32_t*>(camera + 0x10);
+        originalPitch = *reinterpret_cast<int32_t*>(camera + 0x14);
+        overrideLook = high_frequency_camera::Apply(sourceCamera, &applyResult);
+        previewYaw = *reinterpret_cast<int32_t*>(camera + 0x10);
+        previewPitch = *reinterpret_cast<int32_t*>(camera + 0x14);
     }
 
     g_originalBuildCamera(destinationCamera, sourceCamera);
 
+    int32_t destinationYaw = 0;
+    int32_t destinationPitch = 0;
+    if (mainRendererCamera && destinationCamera != nullptr) {
+        auto* camera = static_cast<unsigned char*>(destinationCamera);
+        destinationYaw = *reinterpret_cast<int32_t*>(camera + 0x10);
+        destinationPitch = *reinterpret_cast<int32_t*>(camera + 0x14);
+    }
+
     if (overrideLook) {
         auto* camera = static_cast<unsigned char*>(sourceCamera);
-        *reinterpret_cast<int32_t*>(camera + 0x0C) = originalYaw;
-        *reinterpret_cast<int32_t*>(camera + 0x10) = originalPitch;
+        *reinterpret_cast<int32_t*>(camera + 0x10) = originalYaw;
+        *reinterpret_cast<int32_t*>(camera + 0x14) = originalPitch;
+    }
+
+    if (mainRendererCamera && sourceCamera != nullptr && camera_trace::IsEnabled()) {
+        auto* camera = static_cast<unsigned char*>(sourceCamera);
+        static unsigned long renderSerial = 0;
+        camera_trace::Sample sample = {};
+        sample.sourceCamera = sourceCamera;
+        sample.destinationCamera = destinationCamera;
+        sample.renderSerial = ++renderSerial;
+        raw_input::GetTraceSnapshot(&sample.input);
+        sample.pollSerial = sample.input.pollSerial;
+        sample.rawPacketSerial = sample.input.rawPacketSerial;
+        raw_input::GetPendingMovement(&sample.pendingRawX, &sample.pendingRawY);
+        mouse_scaling_fix::GetTraceSnapshot(&sample.scaling);
+        sample.apply = applyResult;
+        sample.sourceYawBefore = originalYaw;
+        sample.sourcePitchBefore = originalPitch;
+        sample.sourceYawPreview = previewYaw;
+        sample.sourcePitchPreview = previewPitch;
+        sample.destinationYaw = destinationYaw;
+        sample.destinationPitch = destinationPitch;
+        sample.sourceYawRestored = *reinterpret_cast<int32_t*>(camera + 0x10);
+        sample.sourcePitchRestored = *reinterpret_cast<int32_t*>(camera + 0x14);
+        camera_trace::Record(sample);
     }
 
     if (overrideFov) {
