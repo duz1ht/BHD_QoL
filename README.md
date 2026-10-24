@@ -30,6 +30,7 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | `UseCorrectAspectFOV` | `1` | Corrects the field of view for internal render resolutions wider than 4:3 without changing zoom, scopes, or special cameras. |
 | `DPIAware` | `1` | Prevents Windows DPI scaling from distorting window, monitor, and cursor coordinates. Recommended for borderless mode. |
 | `RawMouseInput` | `1` | Uses Windows Raw Input for more reliable relative mouse input while preserving the game's sensitivity, inversion, and bindings. |
+| `HighFrequencyCamera` | `1` | Applies Raw Input movement that arrived after the latest game update to the local first-person presentation camera. Requires `RawMouseInput=1`. |
 | `MouseScalingFix` | `1` | Fixes rounding of small mouse movements, especially noticeable when using scoped weapons. |
 | `AdaptiveScreenCenter` | `1` | Calculates the screen center from the current resolution instead of using fixed values. |
 | `ScaleCursorClipToResolution` | `1` | Uses the current resolution when confining the cursor instead of fixed 640x480 bounds. |
@@ -51,6 +52,7 @@ ForceDesktopResolution=1
 UseCorrectAspectFOV=1
 DPIAware=1
 RawMouseInput=1
+HighFrequencyCamera=1
 MouseScalingFix=1
 AdaptiveScreenCenter=1
 ScaleCursorClipToResolution=1
@@ -60,6 +62,13 @@ RestoreCursorClip=1
 Enabled=0
 RawInputStatisticsIntervalMs=5000
 ```
+
+`HighFrequencyCamera` converts pending Raw Input with the game's current mouse
+sensitivity, vertical inversion, scoped-view divisor, and horizontal filter.
+The temporary visual angles are restored immediately after the camera is built;
+the simulation consumes each movement once through its original path. The
+feature currently applies to the local player in first person. Third-person,
+vehicle, and spectator cameras retain their native behavior.
 
 ## Building
 

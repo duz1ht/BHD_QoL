@@ -14,6 +14,7 @@
 #endif
 
 #include "logger.h"
+#include "high_frequency_camera.h"
 
 namespace camera_fov {
 namespace {
@@ -39,6 +40,7 @@ using BuildCameraFn = void(__cdecl *)(void *, void *);
 BuildCameraFn g_originalBuildCamera = nullptr;
 uintptr_t g_moduleBase = 0;
 bool g_installed = false;
+bool g_fovEnabled = false;
 LONG g_cachedWidth = -1;
 LONG g_cachedHeight = -1;
 int32_t g_cachedFirstPersonFov = kVanillaFovQ16;
@@ -97,7 +99,7 @@ void __cdecl HookBuildCamera(void *destinationCamera, void *sourceCamera) {
     const auto *cameraMode =
         reinterpret_cast<const volatile int32_t *>(g_moduleBase + kCameraModeRva);
 
-    const bool overrideFov =
+    const bool overrideFov = g_fovEnabled &&
         caller == g_moduleBase + kMainRendererReturnRva && cameraFov != nullptr &&
         *cameraMode == 0 &&
         *currentFov == kVanillaFovQ16 && *targetFov == kVanillaFovQ16 &&
@@ -107,7 +109,23 @@ void __cdecl HookBuildCamera(void *destinationCamera, void *sourceCamera) {
         *cameraFov = GetCorrectedFov();
     }
 
+    int32_t originalYaw = 0;
+    int32_t originalPitch = 0;
+    bool overrideLook = false;
+    if (caller == g_moduleBase + kMainRendererReturnRva && sourceCamera != nullptr) {
+        auto* camera = static_cast<unsigned char*>(sourceCamera);
+        originalYaw = *reinterpret_cast<int32_t*>(camera + 0x0C);
+        originalPitch = *reinterpret_cast<int32_t*>(camera + 0x10);
+        overrideLook = high_frequency_camera::Apply(sourceCamera);
+    }
+
     g_originalBuildCamera(destinationCamera, sourceCamera);
+
+    if (overrideLook) {
+        auto* camera = static_cast<unsigned char*>(sourceCamera);
+        *reinterpret_cast<int32_t*>(camera + 0x0C) = originalYaw;
+        *reinterpret_cast<int32_t*>(camera + 0x10) = originalPitch;
+    }
 
     if (overrideFov) {
         *cameraFov = originalFov;
@@ -151,9 +169,11 @@ bool InstallHook(unsigned char *hook) {
 }
 } // namespace
 
-bool Install(bool enabled) {
-    if (!enabled) {
-        logger::Log("INFO", "UseCorrectAspectFOV", "feature disabled");
+bool Install(bool enabled, bool highFrequencyCameraEnabled) {
+    g_fovEnabled = enabled;
+    high_frequency_camera::SetEnabled(highFrequencyCameraEnabled);
+    if (!enabled && !highFrequencyCameraEnabled) {
+        logger::Log("INFO", "CameraHook", "features disabled");
         return false;
     }
     if (g_installed) {
@@ -177,9 +197,10 @@ bool Install(bool enabled) {
     }
 
     g_installed = true;
-    logger::Log("INFO", "UseCorrectAspectFOV",
-                "hook installed address=0x%08lX reference_fov=80 reference_aspect=4:3",
-                reinterpret_cast<unsigned long>(hook));
+    logger::Log("INFO", "CameraHook",
+                "hook installed address=0x%08lX aspect_fov=%d high_frequency_camera=%d",
+                reinterpret_cast<unsigned long>(hook), enabled,
+                highFrequencyCameraEnabled);
     return true;
 }
 

@@ -425,4 +425,13 @@ void HandleDestroy() {
     g_window = nullptr;
 }
 bool IsEnabled() { return g_enabled; }
+bool GetPendingMovement(LONG* x, LONG* y) {
+    if (x == nullptr || y == nullptr || !g_enabled ||
+        InterlockedCompareExchange(&g_backendState, kInactive, kInactive) != kActive) {
+        return false;
+    }
+    *x = InterlockedCompareExchange(&g_accumX, 0, 0);
+    *y = InterlockedCompareExchange(&g_accumY, 0, 0);
+    return true;
+}
 }  // namespace raw_input

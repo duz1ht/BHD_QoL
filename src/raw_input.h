@@ -16,5 +16,6 @@ void HandleFocusLost();
 bool HandleFocusGained(const char* trigger, bool clipReady);
 void HandleDestroy();
 bool IsEnabled();
+bool GetPendingMovement(LONG* x, LONG* y);
 
 }  // namespace raw_input

@@ -204,6 +204,24 @@ void Reset() {
   g_state.active = false;
 }
 
+int32_t PreviewScale(int32_t delta, int32_t scale, int32_t axis) {
+  const int32_t baseScale = static_cast<int32_t>(
+      static_cast<uint32_t>(
+          *reinterpret_cast<volatile int32_t *>(kMouseScaleAddress))
+      << 11);
+  const bool usesRemainder =
+      g_state.active && g_state.scale == scale && scale != baseScale &&
+      (scale & 0xFFFF) != 0;
+  if (!usesRemainder) {
+    return OriginalScale(delta, scale);
+  }
+
+  const int safeAxis = axis == 0 ? 0 : 1;
+  const int64_t value =
+      static_cast<int64_t>(delta) * scale + g_state.remainder[safeAxis];
+  return static_cast<int32_t>(value / 65536);
+}
+
 bool Install(bool enabled) {
   if (!enabled) {
     logger::Log("INFO", "MouseScalingFix", "feature disabled");
