@@ -38,16 +38,19 @@ int32_t OriginalScale(int32_t delta, int32_t scale) {
   return static_cast<int32_t>(product >> 16);
 }
 
-extern "C" int32_t __stdcall ScaleWithRemainder(int32_t delta, int32_t scale,
-                                                int32_t axis) {
-  const int safeAxis = axis == 0 ? 0 : 1;
+bool NeedsCorrection(int32_t scale) {
   const int32_t baseScale = static_cast<int32_t>(
       static_cast<uint32_t>(
           *reinterpret_cast<volatile int32_t *>(kMouseScaleAddress))
       << 11);
-  const bool needsCorrection = scale != baseScale && (scale & 0xFFFF) != 0;
+  return scale != baseScale && (scale & 0xFFFF) != 0;
+}
+
+extern "C" int32_t __stdcall ScaleWithRemainder(int32_t delta, int32_t scale,
+                                                int32_t axis) {
+  const int safeAxis = axis == 0 ? 0 : 1;
   int32_t output = 0;
-  if (!needsCorrection) {
+  if (!NeedsCorrection(scale)) {
     Reset();
     output = OriginalScale(delta, scale);
   } else {
@@ -192,13 +195,9 @@ void Reset() {
 }
 
 int32_t PreviewScale(int32_t delta, int32_t scale, int32_t axis) {
-  const int32_t baseScale = static_cast<int32_t>(
-      static_cast<uint32_t>(
-          *reinterpret_cast<volatile int32_t *>(kMouseScaleAddress))
-      << 11);
+  const bool needsCorrection = NeedsCorrection(scale);
   const bool usesRemainder =
-      g_state.active && g_state.scale == scale && scale != baseScale &&
-      (scale & 0xFFFF) != 0;
+      g_state.active && g_state.scale == scale && needsCorrection;
   if (!usesRemainder) {
     return OriginalScale(delta, scale);
   }

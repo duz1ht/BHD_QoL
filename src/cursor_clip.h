@@ -9,7 +9,4 @@ void HandleFocusLost();
 bool HandleFocusGained();
 void HandleWindowChanged();
 void Shutdown();
-bool IsEnabled();
-bool IsReady();
-
 }  // namespace cursor_clip

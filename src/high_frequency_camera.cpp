@@ -29,8 +29,6 @@ constexpr size_t kCameraPitchOffset = 0x14;
 using QueryFn = int(__cdecl*)();
 
 bool g_enabled = false;
-volatile LONG g_presentationYawOffset = 0;
-volatile LONG g_presentationPitchOffset = 0;
 volatile LONG g_cameraPoseValid = 0;
 int32_t g_simulationCameraPose[6] = {};
 int32_t g_presentationCameraPose[6] = {};
@@ -60,16 +58,12 @@ int32_t ScaleForCurrentView(int32_t rawDelta, int axis) {
 
 void SetEnabled(bool enabled) {
     g_enabled = enabled;
-    InterlockedExchange(&g_presentationYawOffset, 0);
-    InterlockedExchange(&g_presentationPitchOffset, 0);
     InterlockedExchange(&g_cameraPoseValid, 0);
     std::memset(g_simulationCameraPose, 0, sizeof(g_simulationCameraPose));
     std::memset(g_presentationCameraPose, 0, sizeof(g_presentationCameraPose));
 }
 
 bool Apply(void* sourceCamera) {
-    InterlockedExchange(&g_presentationYawOffset, 0);
-    InterlockedExchange(&g_presentationPitchOffset, 0);
     if (!g_enabled) {
         return false;
     }
@@ -98,12 +92,6 @@ bool Apply(void* sourceCamera) {
     }
     InterlockedExchange(&g_cameraPoseValid, 1);
 
-    LONG pendingRawX = 0;
-    LONG pendingRawY = 0;
-    if (!raw_input::GetPendingMovement(&pendingRawX, &pendingRawY)) {
-        return false;
-    }
-
     LONG projectedX = 0;
     LONG projectedY = 0;
     if (!raw_input::GetProjectedNativeMovement(&projectedX, &projectedY)) {
@@ -131,18 +119,9 @@ bool Apply(void* sourceCamera) {
     for (int index = 0; index < 6; ++index) {
         g_presentationCameraPose[index] = reinterpret_cast<int32_t*>(camera)[index + 1];
     }
-    InterlockedExchange(&g_presentationYawOffset, yawOffset);
     const int32_t pitchOffset = *cameraPitch - originalPitch;
-    InterlockedExchange(&g_presentationPitchOffset, pitchOffset);
 
     return yawOffset != 0 || pitchOffset != 0;
-}
-
-bool GetPresentationOffset(int32_t* yawOffset, int32_t* pitchOffset) {
-    if (yawOffset == nullptr || pitchOffset == nullptr) return false;
-    *yawOffset = InterlockedCompareExchange(&g_presentationYawOffset, 0, 0);
-    *pitchOffset = InterlockedCompareExchange(&g_presentationPitchOffset, 0, 0);
-    return *yawOffset != 0 || *pitchOffset != 0;
 }
 
 bool GetPresentationCameraPose(int32_t simulationPose[6], int32_t presentationPose[6]) {

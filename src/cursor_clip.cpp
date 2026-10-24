@@ -1,14 +1,9 @@
 #include "cursor_clip.h"
 
-#include <cstdint>
-
 #include "cursor_clip_math.h"
 
 namespace cursor_clip {
 namespace {
-constexpr uintptr_t kScreenWidth = 0x009F72C0;
-constexpr uintptr_t kScreenHeight = 0x009F72C4;
-
 bool g_enabled = false;
 bool g_ready = false;
 bool g_recoveryPending = false;
@@ -26,11 +21,6 @@ bool GetClientScreenRect(RECT* result) {
     if (!ClientToScreen(g_window, &upperLeft) || !ClientToScreen(g_window, &lowerRight)) return false;
     *result = {upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y};
     return !IsRectEmpty(result);
-}
-
-bool IsContained(const RECT& clip, const RECT& bounds) {
-    return !IsRectEmpty(&clip) && clip.left >= bounds.left && clip.top >= bounds.top &&
-           clip.right <= bounds.right && clip.bottom <= bounds.bottom;
 }
 
 RectEdges ToRectEdges(const RECT& rect) {
@@ -116,8 +106,5 @@ void Shutdown() {
     g_focusSuspended = false;
     g_window = nullptr;
 }
-
-bool IsEnabled() { return g_enabled; }
-bool IsReady() { return !g_enabled || g_ready; }
 
 }  // namespace cursor_clip

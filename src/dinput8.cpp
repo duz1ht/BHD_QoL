@@ -111,7 +111,8 @@ const Patch kClipCursorCodeCavePatch = {
 const Patch kClipCursorPatches[] = {
     {kPatchAddressInitializeInGameSystemsClipCursor, BYTE_SPAN(kInitialClipCursorExpected),
      BYTE_SPAN(kInitialClipCursorReplacement), false},
-    {     kPatchAddressClipCursorToViewPort, BYTE_SPAN(kClipCursorExpected), BYTE_SPAN(kClipCursorReplacement), false},
+    {kPatchAddressClipCursorToViewPort, BYTE_SPAN(kClipCursorExpected),
+     BYTE_SPAN(kClipCursorReplacement), false},
 };
 
 bool BytesEqual(const unsigned char* current, ByteSpan expected) {
