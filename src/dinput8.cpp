@@ -13,6 +13,7 @@
 #include "mouse_scaling_fix.h"
 #include "camera_fov.h"
 #include "camera_trace.h"
+#include "high_frequency_viewmodel.h"
 
 namespace {
 constexpr uintptr_t kImageBase = 0x400000;
@@ -33,6 +34,7 @@ struct PatchConfig {
     bool mouseScalingFix = true;
     bool useCorrectAspectFov = true;
     bool highFrequencyCamera = true;
+    bool highFrequencyViewmodel = true;
     bool highFrequencyCameraTrace = false;
     bool dpiAware = true;
     bool borderlessFullscreen = true;
@@ -240,6 +242,8 @@ PatchConfig LoadPatchConfig() {
         BoolFromIni(iniPath, L"UseCorrectAspectFOV", config.useCorrectAspectFov);
     config.highFrequencyCamera =
         BoolFromIni(iniPath, L"HighFrequencyCamera", config.highFrequencyCamera);
+    config.highFrequencyViewmodel = BoolFromIni(
+        iniPath, L"HighFrequencyViewmodel", config.highFrequencyViewmodel);
     config.highFrequencyCameraTrace = BoolFromIni(
         iniPath, L"HighFrequencyCameraTrace", config.highFrequencyCameraTrace);
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
@@ -264,12 +268,13 @@ void ApplyBhdPatches() {
     logger::Log("INFO", "Config",
                 "AdaptiveScreenCenter=%d ScaleCursorClipToResolution=%d RawMouseInput=%d "
                 "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
-                "HighFrequencyCamera=%d HighFrequencyCameraTrace=%d "
+                "HighFrequencyCamera=%d HighFrequencyViewmodel=%d HighFrequencyCameraTrace=%d "
                 "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
                 "RawInputStatisticsIntervalMs=%lu",
                 config.adaptiveScreenCenter, config.scaleCursorClipToResolution,
                 config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
                 config.useCorrectAspectFov, config.highFrequencyCamera,
+                config.highFrequencyViewmodel,
                 config.highFrequencyCameraTrace, config.dpiAware,
                 config.borderlessFullscreen, config.forceDesktopResolution,
                 config.rawInputStatisticsIntervalMs);
@@ -288,6 +293,8 @@ void ApplyBhdPatches() {
     mouse_scaling_fix::Install(config.mouseScalingFix);
     camera_trace::Initialize(config.highFrequencyCameraTrace);
     camera_fov::Install(config.useCorrectAspectFov, config.highFrequencyCamera);
+    high_frequency_viewmodel::Install(
+        config.highFrequencyCamera && config.highFrequencyViewmodel);
     dpi_awareness::Initialize(config.dpiAware);
     if (config.borderlessFullscreen && !config.dpiAware) {
         logger::Log("WARN", "BorderlessFullscreen",

@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <cstring>
 
 #include "logger.h"
 #include "high_frequency_camera_math.h"
@@ -30,6 +31,11 @@ using QueryFn = int(__cdecl*)();
 
 bool g_enabled = false;
 bool g_loggedActive = false;
+volatile LONG g_presentationYawOffset = 0;
+volatile LONG g_presentationPitchOffset = 0;
+volatile LONG g_cameraPoseValid = 0;
+int32_t g_simulationCameraPose[6] = {};
+int32_t g_presentationCameraPose[6] = {};
 
 template <typename T>
 T Read(uintptr_t address) {
@@ -56,11 +62,18 @@ int32_t ScaleForCurrentView(int32_t rawDelta, int axis) {
 
 void SetEnabled(bool enabled) {
     g_enabled = enabled;
+    InterlockedExchange(&g_presentationYawOffset, 0);
+    InterlockedExchange(&g_presentationPitchOffset, 0);
+    InterlockedExchange(&g_cameraPoseValid, 0);
+    std::memset(g_simulationCameraPose, 0, sizeof(g_simulationCameraPose));
+    std::memset(g_presentationCameraPose, 0, sizeof(g_presentationCameraPose));
     logger::Log("INFO", "HighFrequencyCamera", "feature %s",
                 enabled ? "enabled" : "disabled");
 }
 
 bool Apply(void* sourceCamera, ApplyResult* result) {
+    InterlockedExchange(&g_presentationYawOffset, 0);
+    InterlockedExchange(&g_presentationPitchOffset, 0);
     ApplyResult localResult = {};
     ApplyResult& trace = result == nullptr ? localResult : *result;
     trace = {};
@@ -93,6 +106,13 @@ bool Apply(void* sourceCamera, ApplyResult* result) {
         trace.code = ApplyResultCode::kWrongCameraTarget;
         return false;
     }
+
+    auto* camera = static_cast<unsigned char*>(sourceCamera);
+    for (int index = 0; index < 6; ++index) {
+        g_simulationCameraPose[index] = reinterpret_cast<int32_t*>(camera)[index + 1];
+        g_presentationCameraPose[index] = g_simulationCameraPose[index];
+    }
+    InterlockedExchange(&g_cameraPoseValid, 1);
 
     LONG pendingRawX = 0;
     LONG pendingRawY = 0;
@@ -131,7 +151,6 @@ bool Apply(void* sourceCamera, ApplyResult* result) {
     trace.pitchCommand = pitchCommand;
     trace.yawOffset = yawOffset;
 
-    auto* camera = static_cast<unsigned char*>(sourceCamera);
     auto* cameraYaw = reinterpret_cast<int32_t*>(camera + kCameraYawOffset);
     auto* cameraPitch = reinterpret_cast<int32_t*>(camera + kCameraPitchOffset);
     *cameraYaw = static_cast<int32_t>(
@@ -139,6 +158,11 @@ bool Apply(void* sourceCamera, ApplyResult* result) {
     const int32_t originalPitch = *cameraPitch;
     *cameraPitch = ClampPitch(static_cast<int64_t>(originalPitch) + requestedPitchOffset);
     trace.pitchOffset = *cameraPitch - originalPitch;
+    for (int index = 0; index < 6; ++index) {
+        g_presentationCameraPose[index] = reinterpret_cast<int32_t*>(camera)[index + 1];
+    }
+    InterlockedExchange(&g_presentationYawOffset, yawOffset);
+    InterlockedExchange(&g_presentationPitchOffset, trace.pitchOffset);
 
     trace.code = yawOffset != 0 || trace.pitchOffset != 0
                      ? ApplyResultCode::kApplied
@@ -152,6 +176,21 @@ bool Apply(void* sourceCamera, ApplyResult* result) {
                     static_cast<long>(trace.pitchOffset));
     }
     return trace.code == ApplyResultCode::kApplied;
+}
+
+bool GetPresentationOffset(int32_t* yawOffset, int32_t* pitchOffset) {
+    if (yawOffset == nullptr || pitchOffset == nullptr) return false;
+    *yawOffset = InterlockedCompareExchange(&g_presentationYawOffset, 0, 0);
+    *pitchOffset = InterlockedCompareExchange(&g_presentationPitchOffset, 0, 0);
+    return *yawOffset != 0 || *pitchOffset != 0;
+}
+
+bool GetPresentationCameraPose(int32_t simulationPose[6], int32_t presentationPose[6]) {
+    if (simulationPose == nullptr || presentationPose == nullptr) return false;
+    if (InterlockedCompareExchange(&g_cameraPoseValid, 0, 0) == 0) return false;
+    std::memcpy(simulationPose, g_simulationCameraPose, sizeof(g_simulationCameraPose));
+    std::memcpy(presentationPose, g_presentationCameraPose, sizeof(g_presentationCameraPose));
+    return true;
 }
 
 } // namespace high_frequency_camera

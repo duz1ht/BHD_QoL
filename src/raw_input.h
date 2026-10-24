@@ -33,6 +33,7 @@ void HandleDestroy();
 bool IsEnabled();
 bool GetPendingMovement(LONG* x, LONG* y);
 bool GetProjectedNativeMovement(LONG* x, LONG* y, uint32_t* phaseQ16 = nullptr);
+unsigned long GetSimulationSerial();
 void GetTraceCounters(unsigned long* pollSerial, unsigned long* rawPacketSerial);
 void GetTraceSnapshot(TraceSnapshot* snapshot);
 

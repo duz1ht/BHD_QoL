@@ -31,6 +31,7 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | `DPIAware` | `1` | Prevents Windows DPI scaling from distorting window, monitor, and cursor coordinates. Recommended for borderless mode. |
 | `RawMouseInput` | `1` | Uses Windows Raw Input for more reliable relative mouse input while preserving the game's sensitivity, inversion, and bindings. |
 | `HighFrequencyCamera` | `1` | Applies Raw Input movement that arrived after the latest game update to the local first-person presentation camera. Requires `RawMouseInput=1`. |
+| `HighFrequencyViewmodel` | `1` | Makes the local first-person weapon and hands follow the presentation-camera yaw and pitch. Requires `HighFrequencyCamera=1`. |
 | `MouseScalingFix` | `1` | Fixes rounding of small mouse movements, especially noticeable when using scoped weapons. |
 | `AdaptiveScreenCenter` | `1` | Calculates the screen center from the current resolution instead of using fixed values. |
 | `ScaleCursorClipToResolution` | `1` | Uses the current resolution when confining the cursor instead of fixed 640x480 bounds. |
@@ -53,6 +54,7 @@ UseCorrectAspectFOV=1
 DPIAware=1
 RawMouseInput=1
 HighFrequencyCamera=1
+HighFrequencyViewmodel=1
 MouseScalingFix=1
 AdaptiveScreenCenter=1
 ScaleCursorClipToResolution=1
@@ -74,6 +76,9 @@ temporary visual angles are restored immediately after the camera is built; the
 simulation consumes each movement once through its original path. The feature
 currently applies to the local player in first person. Third-person, vehicle,
 and spectator cameras retain their native behavior.
+`HighFrequencyViewmodel` applies that presentation-only yaw and pitch difference to a
+temporary copy of the first-person weapon pose while it is drawn. Weapon simulation,
+animations, firing, and networking remain native.
 
 ## Building
 

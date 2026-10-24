@@ -650,6 +650,10 @@ bool GetProjectedNativeMovement(LONG* x, LONG* y, uint32_t* phaseQ16) {
     if (phaseQ16 != nullptr) *phaseQ16 = phase;
     return true;
 }
+unsigned long GetSimulationSerial() {
+    return static_cast<unsigned long>(InterlockedCompareExchange(&g_pollSerial, 0, 0));
+}
+
 void GetTraceCounters(unsigned long* pollSerial, unsigned long* rawPacketSerial) {
     if (pollSerial != nullptr) {
         *pollSerial = static_cast<unsigned long>(
