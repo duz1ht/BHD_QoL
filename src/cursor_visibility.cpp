@@ -2,7 +2,6 @@
 
 #include <windows.h>
 
-#include "logger.h"
 
 namespace cursor_visibility {
 namespace {
@@ -11,7 +10,7 @@ int g_showAdjustments = 0;
 bool g_deactivated = false;
 }  // namespace
 
-void HandleGameDeactivated(const char* trigger) {
+void HandleGameDeactivated() {
     if (g_deactivated) return;
     g_deactivated = true;
     g_showAdjustments = 0;
@@ -22,20 +21,13 @@ void HandleGameDeactivated(const char* trigger) {
         displayCount = ShowCursor(TRUE);
         ++g_showAdjustments;
     }
-    logger::Log(displayCount >= 0 ? "INFO" : "WARN", "CursorVisibility",
-                "trigger=%s action=show adjustments=%d display_count=%d",
-                trigger, g_showAdjustments, displayCount);
 }
 
-void HandleGameActivated(const char* trigger) {
+void HandleGameActivated() {
     if (!g_deactivated) return;
-    int displayCount = 0;
     for (int adjustment = 0; adjustment < g_showAdjustments; ++adjustment) {
-        displayCount = ShowCursor(FALSE);
+        ShowCursor(FALSE);
     }
-    logger::Log("INFO", "CursorVisibility",
-                "trigger=%s action=restore adjustments=%d display_count=%d",
-                trigger, g_showAdjustments, displayCount);
     g_showAdjustments = 0;
     g_deactivated = false;
 }

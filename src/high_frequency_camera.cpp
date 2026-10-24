@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <cstring>
 
-#include "logger.h"
 #include "high_frequency_camera_math.h"
 #include "mouse_scaling_fix.h"
 #include "raw_input.h"
@@ -30,7 +29,6 @@ constexpr size_t kCameraPitchOffset = 0x14;
 using QueryFn = int(__cdecl*)();
 
 bool g_enabled = false;
-bool g_loggedActive = false;
 volatile LONG g_presentationYawOffset = 0;
 volatile LONG g_presentationPitchOffset = 0;
 volatile LONG g_cameraPoseValid = 0;
@@ -67,43 +65,29 @@ void SetEnabled(bool enabled) {
     InterlockedExchange(&g_cameraPoseValid, 0);
     std::memset(g_simulationCameraPose, 0, sizeof(g_simulationCameraPose));
     std::memset(g_presentationCameraPose, 0, sizeof(g_presentationCameraPose));
-    logger::Log("INFO", "HighFrequencyCamera", "feature %s",
-                enabled ? "enabled" : "disabled");
 }
 
-bool Apply(void* sourceCamera, ApplyResult* result) {
+bool Apply(void* sourceCamera) {
     InterlockedExchange(&g_presentationYawOffset, 0);
     InterlockedExchange(&g_presentationPitchOffset, 0);
-    ApplyResult localResult = {};
-    ApplyResult& trace = result == nullptr ? localResult : *result;
-    trace = {};
     if (!g_enabled) {
-        trace.code = ApplyResultCode::kDisabled;
         return false;
     }
     if (sourceCamera == nullptr) {
-        trace.code = ApplyResultCode::kNullSource;
         return false;
     }
-    trace.cameraMode = Read<int32_t>(kCameraMode);
-    if (trace.cameraMode != 0) {
-        trace.code = ApplyResultCode::kWrongCameraMode;
+    if (Read<int32_t>(kCameraMode) != 0) {
         return false;
     }
     if (Read<int32_t>(kMouseEnabled) == 0) {
-        trace.code = ApplyResultCode::kMouseDisabled;
         return false;
     }
 
     const uintptr_t player = Read<uintptr_t>(kLocalPlayer);
-    trace.localPlayer = player;
-    trace.cameraTarget = Read<uintptr_t>(kCameraTarget);
     if (player == 0) {
-        trace.code = ApplyResultCode::kNoLocalPlayer;
         return false;
     }
-    if (trace.cameraTarget != player) {
-        trace.code = ApplyResultCode::kWrongCameraTarget;
+    if (Read<uintptr_t>(kCameraTarget) != player) {
         return false;
     }
 
@@ -117,25 +101,15 @@ bool Apply(void* sourceCamera, ApplyResult* result) {
     LONG pendingRawX = 0;
     LONG pendingRawY = 0;
     if (!raw_input::GetPendingMovement(&pendingRawX, &pendingRawY)) {
-        trace.code = ApplyResultCode::kRawInputUnavailable;
         return false;
     }
-    trace.pendingX = pendingRawX;
-    trace.pendingY = pendingRawY;
 
     LONG projectedX = 0;
     LONG projectedY = 0;
-    uint32_t projectionPhaseQ16 = 0;
-    if (!raw_input::GetProjectedNativeMovement(
-            &projectedX, &projectedY, &projectionPhaseQ16)) {
-        trace.code = ApplyResultCode::kRawInputUnavailable;
+    if (!raw_input::GetProjectedNativeMovement(&projectedX, &projectedY)) {
         return false;
     }
-    trace.projectedX = projectedX;
-    trace.projectedY = projectedY;
-    trace.projectionPhaseQ16 = projectionPhaseQ16;
     if (projectedX == 0 && projectedY == 0) {
-        trace.code = ApplyResultCode::kNoPendingMovement;
         return false;
     }
 
@@ -147,9 +121,6 @@ bool Apply(void* sourceCamera, ApplyResult* result) {
 
     const int32_t yawOffset = PendingYawOffset(yawCommand);
     const int32_t requestedPitchOffset = PendingPitchOffset(pitchCommand);
-    trace.yawCommand = yawCommand;
-    trace.pitchCommand = pitchCommand;
-    trace.yawOffset = yawOffset;
 
     auto* cameraYaw = reinterpret_cast<int32_t*>(camera + kCameraYawOffset);
     auto* cameraPitch = reinterpret_cast<int32_t*>(camera + kCameraPitchOffset);
@@ -157,25 +128,14 @@ bool Apply(void* sourceCamera, ApplyResult* result) {
         static_cast<uint32_t>(*cameraYaw) + static_cast<uint32_t>(yawOffset));
     const int32_t originalPitch = *cameraPitch;
     *cameraPitch = ClampPitch(static_cast<int64_t>(originalPitch) + requestedPitchOffset);
-    trace.pitchOffset = *cameraPitch - originalPitch;
     for (int index = 0; index < 6; ++index) {
         g_presentationCameraPose[index] = reinterpret_cast<int32_t*>(camera)[index + 1];
     }
     InterlockedExchange(&g_presentationYawOffset, yawOffset);
-    InterlockedExchange(&g_presentationPitchOffset, trace.pitchOffset);
+    const int32_t pitchOffset = *cameraPitch - originalPitch;
+    InterlockedExchange(&g_presentationPitchOffset, pitchOffset);
 
-    trace.code = yawOffset != 0 || trace.pitchOffset != 0
-                     ? ApplyResultCode::kApplied
-                     : ApplyResultCode::kZeroOffset;
-
-    if (!g_loggedActive) {
-        g_loggedActive = true;
-        logger::Log("INFO", "HighFrequencyCamera",
-                    "first pending movement applied dx=%ld dy=%ld yaw_offset=%ld pitch_offset=%ld",
-                    pendingRawX, pendingRawY, static_cast<long>(yawOffset),
-                    static_cast<long>(trace.pitchOffset));
-    }
-    return trace.code == ApplyResultCode::kApplied;
+    return yawOffset != 0 || pitchOffset != 0;
 }
 
 bool GetPresentationOffset(int32_t* yawOffset, int32_t* pitchOffset) {

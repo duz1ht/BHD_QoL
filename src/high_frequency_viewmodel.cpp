@@ -9,7 +9,6 @@
 
 #include "high_frequency_camera.h"
 #include "high_frequency_viewmodel_math.h"
-#include "logger.h"
 #include "raw_input.h"
 
 #if defined(_MSC_VER)
@@ -54,7 +53,6 @@ RenderModelFn g_originalRenderAlternate = nullptr;
 uintptr_t g_moduleBase = 0;
 bool g_enabled = false;
 bool g_installed = false;
-bool g_loggedActive = false;
 LARGE_INTEGER g_clockFrequency = {};
 PaletteHistory g_history[kHistorySlots] = {};
 
@@ -228,11 +226,6 @@ void DispatchViewmodel(RenderModelFn original, void* model, const float* palette
     float privatePalette[kMaxViewmodelBones * 16] = {};
     if (g_enabled && BuildPrivatePalette(model, palette, privatePalette)) {
         original(model, privatePalette);
-        if (!g_loggedActive) {
-            g_loggedActive = true;
-            logger::Log("INFO", "HighFrequencyViewmodel",
-                        "private first-person palette active; weapon-relative root and local animation interpolated; presentation camera applied");
-        }
         return;
     }
     original(model, palette);
@@ -266,7 +259,6 @@ void __cdecl HookRenderAlternate(void* model, const float* palette) {
 bool Install(bool enabled) {
     g_enabled = enabled;
     if (!enabled) {
-        logger::Log("INFO", "HighFrequencyViewmodel", "feature disabled");
         return true;
     }
     if (g_installed) return true;
@@ -280,24 +272,15 @@ bool Install(bool enabled) {
                     sizeof(kRenderModelSignature)) != 0 ||
         std::memcmp(renderAlternate, kRenderAlternateSignature,
                     sizeof(kRenderAlternateSignature)) != 0) {
-        logger::Log("ERROR", "HighFrequencyViewmodel",
-                    "viewmodel renderer signature mismatch");
         return false;
     }
     if (!InstallHook(renderModel, kRenderModelHookLength, &HookRenderModel,
                      &g_originalRenderModel) ||
         !InstallHook(renderAlternate, kRenderAlternateHookLength,
                      &HookRenderAlternate, &g_originalRenderAlternate)) {
-        logger::Log("ERROR", "HighFrequencyViewmodel",
-                    "private palette hook installation failed error=%lu",
-                    GetLastError());
         return false;
     }
     g_installed = true;
-    logger::Log("INFO", "HighFrequencyViewmodel",
-                "private palette hooks installed primary=0x%08lX alternate=0x%08lX",
-                reinterpret_cast<unsigned long>(renderModel),
-                reinterpret_cast<unsigned long>(renderAlternate));
     return true;
 }
 

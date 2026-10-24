@@ -13,9 +13,7 @@
 #pragma intrinsic(_ReturnAddress)
 #endif
 
-#include "logger.h"
 #include "high_frequency_camera.h"
-#include "camera_trace.h"
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
 
@@ -63,10 +61,6 @@ int32_t GetCorrectedFov() {
     g_cachedWidth = width;
     g_cachedHeight = height;
     g_cachedFirstPersonFov = CorrectHorizontalFovQ16(width, height);
-    logger::Log("INFO", "UseCorrectAspectFOV",
-                "render_size=%ldx%ld visual_fov=%.2f gameplay_fov=80",
-                width, height,
-                static_cast<double>(g_cachedFirstPersonFov) / 65536.0);
     return g_cachedFirstPersonFov;
 }
 
@@ -116,30 +110,15 @@ void __cdecl HookBuildCamera(void *destinationCamera, void *sourceCamera) {
     int32_t originalPitch = 0;
     bool overrideLook = false;
     const bool mainRendererCamera = caller == g_moduleBase + kMainRendererReturnRva;
-    if (mainRendererCamera) {
-        camera_trace::UpdateHotkey();
-    }
-    high_frequency_camera::ApplyResult applyResult = {};
-    int32_t previewYaw = 0;
-    int32_t previewPitch = 0;
     if (mainRendererCamera && sourceCamera != nullptr) {
         auto* camera = static_cast<unsigned char*>(sourceCamera);
         originalYaw = *reinterpret_cast<int32_t*>(camera + 0x10);
         originalPitch = *reinterpret_cast<int32_t*>(camera + 0x14);
-        overrideLook = high_frequency_camera::Apply(sourceCamera, &applyResult);
-        previewYaw = *reinterpret_cast<int32_t*>(camera + 0x10);
-        previewPitch = *reinterpret_cast<int32_t*>(camera + 0x14);
+        overrideLook = high_frequency_camera::Apply(sourceCamera);
     }
 
     g_originalBuildCamera(destinationCamera, sourceCamera);
 
-    int32_t destinationYaw = 0;
-    int32_t destinationPitch = 0;
-    if (mainRendererCamera && destinationCamera != nullptr) {
-        auto* camera = static_cast<unsigned char*>(destinationCamera);
-        destinationYaw = *reinterpret_cast<int32_t*>(camera + 0x10);
-        destinationPitch = *reinterpret_cast<int32_t*>(camera + 0x14);
-    }
 
     if (overrideLook) {
         auto* camera = static_cast<unsigned char*>(sourceCamera);
@@ -147,29 +126,6 @@ void __cdecl HookBuildCamera(void *destinationCamera, void *sourceCamera) {
         *reinterpret_cast<int32_t*>(camera + 0x14) = originalPitch;
     }
 
-    if (mainRendererCamera && sourceCamera != nullptr && camera_trace::IsEnabled()) {
-        auto* camera = static_cast<unsigned char*>(sourceCamera);
-        static unsigned long renderSerial = 0;
-        camera_trace::Sample sample = {};
-        sample.sourceCamera = sourceCamera;
-        sample.destinationCamera = destinationCamera;
-        sample.renderSerial = ++renderSerial;
-        raw_input::GetTraceSnapshot(&sample.input);
-        sample.pollSerial = sample.input.pollSerial;
-        sample.rawPacketSerial = sample.input.rawPacketSerial;
-        raw_input::GetPendingMovement(&sample.pendingRawX, &sample.pendingRawY);
-        mouse_scaling_fix::GetTraceSnapshot(&sample.scaling);
-        sample.apply = applyResult;
-        sample.sourceYawBefore = originalYaw;
-        sample.sourcePitchBefore = originalPitch;
-        sample.sourceYawPreview = previewYaw;
-        sample.sourcePitchPreview = previewPitch;
-        sample.destinationYaw = destinationYaw;
-        sample.destinationPitch = destinationPitch;
-        sample.sourceYawRestored = *reinterpret_cast<int32_t*>(camera + 0x10);
-        sample.sourcePitchRestored = *reinterpret_cast<int32_t*>(camera + 0x14);
-        camera_trace::Record(sample);
-    }
 
     if (overrideFov) {
         *cameraFov = originalFov;
@@ -217,11 +173,9 @@ bool Install(bool enabled, bool highFrequencyCameraEnabled) {
     g_fovEnabled = enabled;
     high_frequency_camera::SetEnabled(highFrequencyCameraEnabled);
     if (!enabled && !highFrequencyCameraEnabled) {
-        logger::Log("INFO", "CameraHook", "features disabled");
         return false;
     }
     if (g_installed) {
-        logger::Log("INFO", "UseCorrectAspectFOV", "hook already installed");
         return true;
     }
 
@@ -229,22 +183,13 @@ bool Install(bool enabled, bool highFrequencyCameraEnabled) {
     g_moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     auto *hook = reinterpret_cast<unsigned char *>(g_moduleBase + kBuildCameraRva);
     if (memcmp(hook, kBuildCameraSignature, sizeof(kBuildCameraSignature)) != 0) {
-        logger::Log("ERROR", "UseCorrectAspectFOV",
-                    "camera builder signature mismatch address=0x%08lX",
-                    reinterpret_cast<unsigned long>(hook));
         return false;
     }
     if (!InstallHook(hook)) {
-        logger::Log("ERROR", "UseCorrectAspectFOV", "hook installation failed: error=%lu",
-                    GetLastError());
         return false;
     }
 
     g_installed = true;
-    logger::Log("INFO", "CameraHook",
-                "hook installed address=0x%08lX aspect_fov=%d high_frequency_camera=%d",
-                reinterpret_cast<unsigned long>(hook), enabled,
-                highFrequencyCameraEnabled);
     return true;
 }
 

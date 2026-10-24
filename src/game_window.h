@@ -14,6 +14,5 @@ struct Settings {
 
 void Configure(const Settings& settings);
 bool EnsureInstalled(HWND window);
-void HandleStatisticsInterval();
 
 }  // namespace game_window

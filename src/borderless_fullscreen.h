@@ -9,6 +9,6 @@ namespace borderless_fullscreen {
 bool Initialize(bool enabled, bool forceDesktopResolution);
 
 // Applies (or re-applies) the borderless frame and full-monitor geometry.
-bool Apply(HWND window, const char* trigger);
+bool Apply(HWND window);
 
 }  // namespace borderless_fullscreen

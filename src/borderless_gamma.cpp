@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <cstring>
 
-#include "logger.h"
 
 namespace borderless_gamma {
 namespace {
@@ -28,7 +27,7 @@ GammaRamp g_originalRamp = {};
 GammaRamp g_appliedRamp = {};
 wchar_t g_displayName[CCHDEVICENAME] = {};
 
-bool Restore(const char* trigger);
+bool Restore();
 
 void CloseDisplayDc() {
     if (g_displayDc != nullptr) {
@@ -46,7 +45,7 @@ bool OpenDisplayDc(HWND window) {
     if (monitor == nullptr || !GetMonitorInfoW(monitor, &info)) return false;
     if (g_displayDc != nullptr && lstrcmpW(g_displayName, info.szDevice) == 0) return true;
 
-    Restore("monitor_changed");
+    Restore();
     CloseDisplayDc();
     g_displayDc = CreateDCW(L"DISPLAY", info.szDevice, nullptr, nullptr);
     if (g_displayDc == nullptr) return false;
@@ -56,29 +55,21 @@ bool OpenDisplayDc(HWND window) {
         return false;
     }
     g_originalCaptured = true;
-    logger::Log("INFO", "BorderlessGamma", "captured original ramp display=%ls",
-                g_displayName);
     return true;
 }
 
-bool Restore(const char* trigger) {
+bool Restore() {
     if (!g_active) return true;
     const BOOL restored = g_displayDc != nullptr && g_originalCaptured &&
                           SetDeviceGammaRamp(g_displayDc, &g_originalRamp);
-    logger::Log(restored ? "INFO" : "WARN", "BorderlessGamma",
-                "trigger=%s action=restore result=%d error=%lu", trigger, restored,
-                restored ? ERROR_SUCCESS : GetLastError());
     g_active = false;
     return restored != FALSE;
 }
 
-bool Apply(HWND window, const char* trigger, bool force) {
+bool Apply(HWND window, bool force) {
     if (!g_enabled || window == nullptr || !IsWindow(window) || IsIconic(window) ||
         GetForegroundWindow() != window) return false;
     if (!OpenDisplayDc(window)) {
-        logger::Log("WARN", "BorderlessGamma",
-                    "trigger=%s could not open display gamma ramp: error=%lu", trigger,
-                    GetLastError());
         return false;
     }
 
@@ -92,9 +83,6 @@ bool Apply(HWND window, const char* trigger, bool force) {
         g_appliedRamp = gameRamp;
         g_active = true;
     }
-    logger::Log(applied ? "INFO" : "WARN", "BorderlessGamma",
-                "trigger=%s action=apply result=%d error=%lu", trigger, applied,
-                applied ? ERROR_SUCCESS : GetLastError());
     return applied != FALSE;
 }
 }  // namespace
@@ -102,34 +90,30 @@ bool Apply(HWND window, const char* trigger, bool force) {
 bool Initialize(bool enabled) {
     g_enabled = false;
     if (!enabled) {
-        logger::Log("INFO", "BorderlessGamma", "feature disabled");
         return true;
     }
     if (std::memcmp(reinterpret_cast<const void*>(kSetGammaRampCall),
                     kExpectedSetGammaRampCall, sizeof(kExpectedSetGammaRampCall)) != 0) {
-        logger::Log("ERROR", "BorderlessGamma",
-                    "supported executable signature did not match; feature disabled");
         return false;
     }
     g_enabled = true;
-    logger::Log("INFO", "BorderlessGamma", "feature enabled");
     return true;
 }
 
-void HandleFocusGained(HWND window, const char* trigger) { Apply(window, trigger, true); }
+void HandleFocusGained(HWND window) { Apply(window, true); }
 
-void HandleFocusLost(const char* trigger) { Restore(trigger); }
+void HandleFocusLost() { Restore(); }
 
-void HandleDisplayChanged(HWND window, const char* trigger) {
-    Restore(trigger);
+void HandleDisplayChanged(HWND window) {
+    Restore();
     CloseDisplayDc();
-    Apply(window, trigger, true);
+    Apply(window, true);
 }
 
-void Poll(HWND window) { Apply(window, "poll", false); }
+void Poll(HWND window) { Apply(window, false); }
 
 void Shutdown() {
-    Restore("shutdown");
+    Restore();
     CloseDisplayDc();
     g_enabled = false;
 }

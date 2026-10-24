@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <cstring>
 
-#include "logger.h"
 
 namespace borderless_fullscreen {
 namespace {
@@ -18,6 +17,10 @@ constexpr uintptr_t kWindowedArgumentHandler = 0x00469122;
 constexpr uintptr_t kWindowedRenderRead = 0x0046AA17;
 constexpr uintptr_t kResolutionOverride = 0x0046AAA9;
 constexpr uintptr_t kResolutionOverrideReturn = 0x0046AAAE;
+constexpr LONG_PTR kRemovedStyle = WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX |
+                                   WS_MAXIMIZEBOX | WS_SYSMENU;
+constexpr LONG_PTR kRemovedExStyle = WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE |
+                                     WS_EX_CLIENTEDGE | WS_EX_STATICEDGE;
 const unsigned char kExpectedWindowedReference[] = {0xA1, 0xC8, 0x41, 0xA3, 0x00};
 const unsigned char kExpectedWindowedArgumentHandler[] = {
     0x89, 0x3D, 0x7C, 0xD4, 0x95, 0x00, 0x89, 0x3D, 0xF0, 0x46, 0xA3, 0x00};
@@ -32,28 +35,16 @@ volatile LONG g_monitorHeight = 0;
 RECT g_monitorRect = {};
 HMONITOR g_monitor = nullptr;
 void* g_resolutionCodeCave = nullptr;
-LONG g_lastActive = -1;
-LONG g_lastRenderWidth = -1;
-LONG g_lastRenderHeight = -1;
-LONG g_lastOutputWidth = -1;
-LONG g_lastOutputHeight = -1;
-bool g_loggedUnknownResolution = false;
 
-bool WriteGameValue(uintptr_t address, LONG value, const char* name) {
+bool WriteGameValue(uintptr_t address, LONG value) {
     void* destination = reinterpret_cast<void*>(address);
     DWORD oldProtection = 0;
     if (!VirtualProtect(destination, sizeof(value), PAGE_READWRITE, &oldProtection)) {
-        logger::Log("ERROR", "BorderlessFullscreen",
-                    "could not write %s: VirtualProtect error=%lu", name, GetLastError());
         return false;
     }
     std::memcpy(destination, &value, sizeof(value));
     DWORD ignored = 0;
     const BOOL restored = VirtualProtect(destination, sizeof(value), oldProtection, &ignored);
-    if (!restored) {
-        logger::Log("ERROR", "BorderlessFullscreen",
-                    "could not restore protection for %s: error=%lu", name, GetLastError());
-    }
     return restored != FALSE;
 }
 
@@ -76,18 +67,12 @@ bool WriteCode(uintptr_t address, const void* bytes, size_t size) {
     void* destination = reinterpret_cast<void*>(address);
     DWORD oldProtection = 0;
     if (!VirtualProtect(destination, size, PAGE_EXECUTE_READWRITE, &oldProtection)) {
-        logger::Log("ERROR", "BorderlessFullscreen",
-                    "could not make resolution patch writable: error=%lu", GetLastError());
         return false;
     }
     std::memcpy(destination, bytes, size);
     FlushInstructionCache(GetCurrentProcess(), destination, size);
     DWORD ignored = 0;
-    if (!VirtualProtect(destination, size, oldProtection, &ignored)) {
-        logger::Log("WARN", "BorderlessFullscreen",
-                    "resolution patch applied but protection restore failed: error=%lu",
-                    GetLastError());
-    }
+    VirtualProtect(destination, size, oldProtection, &ignored);
     return true;
 }
 
@@ -159,88 +144,20 @@ bool GetWindowMonitorRect(HWND window, RECT* result) {
 }
 
 bool ConfigureGame() {
-    const bool windowedConfigured = WriteGameValue(kVidWindowed, 1, "VID_Windowed") &&
-                                    WriteGameValue(kCommandLineWindowed, 1,
-                                                   "command-line windowed state") &&
-                                    WriteGameValue(kWindowedAuxiliary, 1,
-                                                   "windowed auxiliary state");
+    const bool windowedConfigured = WriteGameValue(kVidWindowed, 1) &&
+                                    WriteGameValue(kCommandLineWindowed, 1) &&
+                                    WriteGameValue(kWindowedAuxiliary, 1);
     if (!windowedConfigured || !g_forceDesktopResolution) return windowedConfigured;
-    return WriteGameValue(kScreenWidth, g_monitorWidth, "screen width") &&
-           WriteGameValue(kScreenHeight, g_monitorHeight, "screen height");
+    return WriteGameValue(kScreenWidth, g_monitorWidth) &&
+           WriteGameValue(kScreenHeight, g_monitorHeight);
 }
 
-void LogActiveState(HWND window, const char* trigger) {
-    RECT outer = {};
-    RECT client = {};
-    POINT upperLeft = {};
-    POINT lowerRight = {};
-    const bool outerValid = GetWindowRect(window, &outer) != FALSE;
-    const bool clientValid = GetClientRect(window, &client) != FALSE;
-    lowerRight = {client.right, client.bottom};
-    const bool clientScreenValid = clientValid && ClientToScreen(window, &upperLeft) &&
-                                   ClientToScreen(window, &lowerRight);
-    const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
-    const LONG_PTR exStyle = GetWindowLongPtrW(window, GWL_EXSTYLE);
-    const LONG_PTR unwantedStyle = WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX |
-                                  WS_MAXIMIZEBOX | WS_SYSMENU;
-    const LONG_PTR unwantedExStyle = WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE |
-                                    WS_EX_CLIENTEDGE | WS_EX_STATICEDGE;
-    const bool styleOk = (style & WS_POPUP) && !(style & unwantedStyle) &&
-                         !(exStyle & unwantedExStyle);
-    const bool outerOk = outerValid && EqualRect(&outer, &g_monitorRect);
-    const RECT clientScreen = {upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y};
-    const bool clientOk = clientScreenValid && EqualRect(&clientScreen, &g_monitorRect);
-    const bool windowedOk = *reinterpret_cast<volatile LONG*>(kCommandLineWindowed) == 1 &&
-                            *reinterpret_cast<volatile LONG*>(kWindowedAuxiliary) == 1;
-    const LONG renderWidth = *reinterpret_cast<volatile LONG*>(kScreenWidth);
-    const LONG renderHeight = *reinterpret_cast<volatile LONG*>(kScreenHeight);
-    const LONG outputWidth = g_monitorRect.right - g_monitorRect.left;
-    const LONG outputHeight = g_monitorRect.bottom - g_monitorRect.top;
-    const bool resolutionKnown = renderWidth > 0 && renderHeight > 0;
-    const bool resolutionOk = !g_forceDesktopResolution ||
-                              (resolutionKnown && renderWidth == outputWidth &&
-                               renderHeight == outputHeight);
-    const bool scaled = resolutionKnown &&
-                        (renderWidth != outputWidth || renderHeight != outputHeight);
-    const LONG active = styleOk && outerOk && clientOk && windowedOk && resolutionOk;
-    if (!resolutionKnown && g_loggedUnknownResolution && active == g_lastActive &&
-        outputWidth == g_lastOutputWidth && outputHeight == g_lastOutputHeight) return;
-    if (resolutionKnown && active == g_lastActive && renderWidth == g_lastRenderWidth &&
-        renderHeight == g_lastRenderHeight && outputWidth == g_lastOutputWidth &&
-        outputHeight == g_lastOutputHeight) return;
-    g_lastActive = active;
-    g_lastRenderWidth = resolutionKnown ? renderWidth : -1;
-    g_lastRenderHeight = resolutionKnown ? renderHeight : -1;
-    g_lastOutputWidth = outputWidth;
-    g_lastOutputHeight = outputHeight;
-    g_loggedUnknownResolution = !resolutionKnown;
-    if (resolutionKnown) {
-        logger::Log(active ? "INFO" : "WARN", "BorderlessFullscreen",
-                    "trigger=%s active=%ld style_ok=%d window_rect_ok=%d client_rect_ok=%d "
-                    "windowed_ok=%d resolution_ok=%d force_desktop_resolution=%d "
-                    "render_resolution=%ldx%ld output_size=%ldx%ld scaled=%d",
-                    trigger, active, styleOk, outerOk, clientOk, windowedOk, resolutionOk,
-                    g_forceDesktopResolution, renderWidth, renderHeight, outputWidth,
-                    outputHeight, scaled);
-    } else {
-        logger::Log(active ? "INFO" : "WARN", "BorderlessFullscreen",
-                    "trigger=%s active=%ld style_ok=%d window_rect_ok=%d client_rect_ok=%d "
-                    "windowed_ok=%d resolution_ok=%d force_desktop_resolution=%d "
-                    "render_resolution=unknown output_size=%ldx%ld scaled=unknown",
-                    trigger, active, styleOk, outerOk, clientOk, windowedOk, resolutionOk,
-                    g_forceDesktopResolution, outputWidth, outputHeight);
-    }
-}
 
 bool WindowMatches(HWND window, LONG_PTR style, LONG_PTR exStyle) {
     RECT current = {};
     if (!GetWindowRect(window, &current)) return false;
-    const LONG_PTR unwantedStyle = WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX |
-                                  WS_MAXIMIZEBOX | WS_SYSMENU;
-    const LONG_PTR unwantedExStyle = WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE |
-                                    WS_EX_CLIENTEDGE | WS_EX_STATICEDGE;
-    return (style & WS_POPUP) != 0 && (style & unwantedStyle) == 0 &&
-           (exStyle & unwantedExStyle) == 0 && EqualRect(&current, &g_monitorRect);
+    return (style & WS_POPUP) != 0 && (style & kRemovedStyle) == 0 &&
+           (exStyle & kRemovedExStyle) == 0 && EqualRect(&current, &g_monitorRect);
 }
 }  // namespace
 
@@ -248,18 +165,13 @@ bool Initialize(bool enabled, bool forceDesktopResolution) {
     g_enabled = enabled;
     g_forceDesktopResolution = enabled && forceDesktopResolution;
     if (!enabled) {
-        logger::Log("INFO", "BorderlessFullscreen", "feature disabled");
         return true;
     }
     if (!ValidateExecutable(g_forceDesktopResolution)) {
-        logger::Log("ERROR", "BorderlessFullscreen",
-                    "supported executable signatures did not match; feature disabled");
         g_enabled = false;
         return false;
     }
     if (!GetPrimaryMonitorRect(&g_monitorRect)) {
-        logger::Log("ERROR", "BorderlessFullscreen",
-                    "primary monitor bounds unavailable: error=%lu", GetLastError());
         g_enabled = false;
         return false;
     }
@@ -270,21 +182,13 @@ bool Initialize(bool enabled, bool forceDesktopResolution) {
     const bool configured = ConfigureGame() &&
                             (!g_forceDesktopResolution || InstallResolutionOverride());
     if (!configured) {
-        logger::Log("ERROR", "BorderlessFullscreen",
-                    "windowed state or requested resolution override installation failed");
         g_enabled = false;
         return false;
     }
-    logger::Log("INFO", "BorderlessFullscreen",
-                "feature enabled force_desktop_resolution=%d "
-                "monitor=(%ld,%ld)-(%ld,%ld) output_size=%ldx%ld",
-                g_forceDesktopResolution,
-                g_monitorRect.left, g_monitorRect.top, g_monitorRect.right,
-                g_monitorRect.bottom, width, height);
     return true;
 }
 
-bool Apply(HWND window, const char* trigger) {
+bool Apply(HWND window) {
     if (!g_enabled) return true;
     if (window == nullptr || !IsWindow(window)) return false;
     if (InterlockedCompareExchange(&g_applying, 1, 0) != 0) return true;
@@ -292,8 +196,6 @@ bool Apply(HWND window, const char* trigger) {
     RECT monitorRect = {};
     if (!GetWindowMonitorRect(window, &monitorRect)) {
         InterlockedExchange(&g_applying, 0);
-        logger::Log("ERROR", "BorderlessFullscreen",
-                    "trigger=%s monitor bounds unavailable: error=%lu", trigger, GetLastError());
         return false;
     }
     g_monitorRect = monitorRect;
@@ -320,17 +222,12 @@ bool Apply(HWND window, const char* trigger) {
         return false;
     }
     if (WindowMatches(window, oldStyle, oldExStyle)) {
-        LogActiveState(window, trigger);
         InterlockedExchange(&g_applying, 0);
         return true;
     }
 
-    const LONG_PTR removedStyle = WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX |
-                                  WS_MAXIMIZEBOX | WS_SYSMENU;
-    const LONG_PTR removedExStyle = WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE |
-                                    WS_EX_CLIENTEDGE | WS_EX_STATICEDGE;
-    const LONG_PTR style = (oldStyle & ~removedStyle) | WS_POPUP;
-    const LONG_PTR exStyle = oldExStyle & ~removedExStyle;
+    const LONG_PTR style = (oldStyle & ~kRemovedStyle) | WS_POPUP;
+    const LONG_PTR exStyle = oldExStyle & ~kRemovedExStyle;
 
     SetLastError(ERROR_SUCCESS);
     const LONG_PTR previousStyle = SetWindowLongPtrW(window, GWL_STYLE, style);
@@ -343,15 +240,8 @@ bool Apply(HWND window, const char* trigger) {
     const BOOL positioned = styleSet && exStyleSet &&
         SetWindowPos(window, HWND_TOP, g_monitorRect.left, g_monitorRect.top, width, height,
                      SWP_FRAMECHANGED | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
-    const DWORD positionError = positioned ? ERROR_SUCCESS : GetLastError();
     InterlockedExchange(&g_applying, 0);
 
-    logger::Log(positioned ? "INFO" : "ERROR", "BorderlessFullscreen",
-                "trigger=%s style=0x%08lX ex_style=0x%08lX rect=(%ld,%ld)-(%ld,%ld) result=%d error=%lu",
-                trigger, static_cast<unsigned long>(style), static_cast<unsigned long>(exStyle),
-                g_monitorRect.left, g_monitorRect.top, g_monitorRect.right,
-                g_monitorRect.bottom, positioned, positionError);
-    if (positioned) LogActiveState(window, trigger);
     return positioned != FALSE;
 }
 

@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "logger.h"
 #include "dpi_awareness.h"
 #include "borderless_fullscreen.h"
 #include "borderless_gamma.h"
@@ -12,7 +11,6 @@
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
 #include "camera_fov.h"
-#include "camera_trace.h"
 #include "high_frequency_viewmodel.h"
 
 namespace {
@@ -35,13 +33,9 @@ struct PatchConfig {
     bool useCorrectAspectFov = true;
     bool highFrequencyCamera = true;
     bool highFrequencyViewmodel = true;
-    bool highFrequencyCameraTrace = false;
     bool dpiAware = true;
     bool borderlessFullscreen = true;
     bool forceDesktopResolution = true;
-    bool loggingEnabled = false;
-    unsigned long rawInputStatisticsIntervalMs = 5000;
-    bool invalidStatisticsInterval = false;
 };
 
 struct ByteSpan {
@@ -50,8 +44,6 @@ struct ByteSpan {
 };
 
 struct Patch {
-    const char* title;
-    const char* description;
     uintptr_t virtualAddress;
     ByteSpan expected;
     ByteSpan replacement;
@@ -89,8 +81,6 @@ const unsigned char kClipCursorExpected[] = {0xC7, 0x45, 0xF8, 0x7F, 0x02, 0x00,
 const unsigned char kClipCursorReplacement[] = {0xE9, 0x53, 0x20, 0x18, 0x00, 0x90, 0x90};
 
 const Patch kDynamicResolutionCodeCavePatch = {
-    "Install dynamic resolution code cave",
-    "Writes dynamic-resolution calculations before redirecting fixed-resolution instructions.",
     kDynamicResolutionCodeCave,
     {nullptr, sizeof(kDynamicResolutionCodeCaveBytes)},
     BYTE_SPAN(kDynamicResolutionCodeCaveBytes),
@@ -98,8 +88,6 @@ const Patch kDynamicResolutionCodeCavePatch = {
 };
 
 const Patch kDynamicResolutionCorePatch = {
-    "Compute additional dynamic resolution values",
-    "LoadingGame(): MOV DWORD PTR [009FB3D8],EBX -> JMP 005E4879",
     kPatchAddressLoadingGameDynamicResolution,
     BYTE_SPAN(kLoadingDynamicResolutionExpected),
     BYTE_SPAN(kLoadingDynamicResolutionReplacement),
@@ -107,8 +95,6 @@ const Patch kDynamicResolutionCorePatch = {
 };
 
 const Patch kInitialClipCursorCodeCavePatch = {
-    "Install initial ClipCursor code cave",
-    "Writes dynamic ClipCursor bounds used by InitializeInGameSystems().",
     kInitialClipCursorCodeCave,
     {nullptr, sizeof(kInitialClipCursorCodeCaveBytes)},
     BYTE_SPAN(kInitialClipCursorCodeCaveBytes),
@@ -116,8 +102,6 @@ const Patch kInitialClipCursorCodeCavePatch = {
 };
 
 const Patch kClipCursorCodeCavePatch = {
-    "Install viewport ClipCursor code cave",
-    "Writes dynamic ClipCursor bounds used by ClipCursorToViewPort().",
     kClipCursorCodeCave,
     {nullptr, sizeof(kClipCursorCodeCaveBytes)},
     BYTE_SPAN(kClipCursorCodeCaveBytes),
@@ -125,13 +109,9 @@ const Patch kClipCursorCodeCavePatch = {
 };
 
 const Patch kClipCursorPatches[] = {
-    {"Use dynamic resolution in initial ClipCursor setup",
-     "InitializeInGameSystems(): MOV DWORD PTR [EBP + -0x8],0x27F -> JMP 005E4912",
-     kPatchAddressInitializeInGameSystemsClipCursor, BYTE_SPAN(kInitialClipCursorExpected),
+    {kPatchAddressInitializeInGameSystemsClipCursor, BYTE_SPAN(kInitialClipCursorExpected),
      BYTE_SPAN(kInitialClipCursorReplacement), false},
-    {"Use dynamic resolution when clipping cursor to viewport",
-     "ClipCursorToViewPort(): MOV DWORD PTR [EBP + -0x8],0x27F -> JMP 005E492B",
-     kPatchAddressClipCursorToViewPort, BYTE_SPAN(kClipCursorExpected), BYTE_SPAN(kClipCursorReplacement), false},
+    {     kPatchAddressClipCursorToViewPort, BYTE_SPAN(kClipCursorExpected), BYTE_SPAN(kClipCursorReplacement), false},
 };
 
 bool BytesEqual(const unsigned char* current, ByteSpan expected) {
@@ -176,28 +156,16 @@ bool WriteBytes(uintptr_t virtualAddress, ByteSpan replacement) {
 bool ApplyPatch(const Patch& patch) {
     auto* address = reinterpret_cast<unsigned char*>(patch.virtualAddress);
     if (BytesEqual(address, patch.replacement)) {
-        logger::Log("INFO", "Patch", "address=0x%08lX status=already_applied title=%s",
-                    static_cast<unsigned long>(patch.virtualAddress), patch.title);
         return true;
     }
 
     const bool expectedMatches = BytesEqual(address, patch.expected);
     const bool zeroFilledMatches = patch.allowZeroFilledExpected && BytesAreZeroFilled(address, patch.expected.size);
     if (!expectedMatches && !zeroFilledMatches) {
-        logger::Log("ERROR", "Patch", "address=0x%08lX status=unexpected_bytes title=%s",
-                    static_cast<unsigned long>(patch.virtualAddress), patch.title);
         return false;
     }
 
-    if (!WriteBytes(patch.virtualAddress, patch.replacement)) {
-        logger::Log("ERROR", "Patch", "address=0x%08lX status=write_failed error=%lu title=%s",
-                    static_cast<unsigned long>(patch.virtualAddress), GetLastError(), patch.title);
-        return false;
-    }
-
-    logger::Log("INFO", "Patch", "address=0x%08lX status=applied title=%s description=%s",
-                static_cast<unsigned long>(patch.virtualAddress), patch.title, patch.description);
-    return true;
+    return WriteBytes(patch.virtualAddress, patch.replacement);
 }
 
 template <size_t Count>
@@ -244,62 +212,25 @@ PatchConfig LoadPatchConfig() {
         BoolFromIni(iniPath, L"HighFrequencyCamera", config.highFrequencyCamera);
     config.highFrequencyViewmodel = BoolFromIni(
         iniPath, L"HighFrequencyViewmodel", config.highFrequencyViewmodel);
-    config.highFrequencyCameraTrace = BoolFromIni(
-        iniPath, L"HighFrequencyCameraTrace", config.highFrequencyCameraTrace);
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
     config.borderlessFullscreen =
         BoolFromIni(iniPath, L"BorderlessFullscreen", config.borderlessFullscreen);
     config.forceDesktopResolution =
         BoolFromIni(iniPath, L"ForceDesktopResolution", config.forceDesktopResolution);
-    config.loggingEnabled =
-        GetPrivateProfileIntW(L"Logging", L"Enabled", config.loggingEnabled ? 1 : 0, iniPath) != 0;
-    const int interval = GetPrivateProfileIntW(L"Logging", L"RawInputStatisticsIntervalMs",
-                                                config.rawInputStatisticsIntervalMs, iniPath);
-    config.invalidStatisticsInterval = interval < 1000 || interval > 60000;
-    config.rawInputStatisticsIntervalMs = config.invalidStatisticsInterval
-                                              ? 5000
-                                              : static_cast<unsigned long>(interval);
     return config;
 }
 
 void ApplyBhdPatches() {
     const PatchConfig config = LoadPatchConfig();
-    logger::Initialize(config.loggingEnabled);
-    logger::Log("INFO", "Config",
-                "AdaptiveScreenCenter=%d ScaleCursorClipToResolution=%d RawMouseInput=%d "
-                "RestoreCursorClip=%d MouseScalingFix=%d UseCorrectAspectFOV=%d "
-                "HighFrequencyCamera=%d HighFrequencyViewmodel=%d HighFrequencyCameraTrace=%d "
-                "DPIAware=%d BorderlessFullscreen=%d ForceDesktopResolution=%d "
-                "RawInputStatisticsIntervalMs=%lu",
-                config.adaptiveScreenCenter, config.scaleCursorClipToResolution,
-                config.rawMouseInput, config.restoreCursorClip, config.mouseScalingFix,
-                config.useCorrectAspectFov, config.highFrequencyCamera,
-                config.highFrequencyViewmodel,
-                config.highFrequencyCameraTrace, config.dpiAware,
-                config.borderlessFullscreen, config.forceDesktopResolution,
-                config.rawInputStatisticsIntervalMs);
-    if (config.invalidStatisticsInterval) {
-        logger::Log("WARN", "Config",
-                    "invalid RawInputStatisticsIntervalMs; using default 5000");
-    }
     const uintptr_t imageBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     if (imageBase != kImageBase) {
-        logger::Log("ERROR", "Executable", "unsupported image base: expected=0x%08lX actual=0x%08lX",
-                    static_cast<unsigned long>(kImageBase), static_cast<unsigned long>(imageBase));
         return;
     }
-    logger::Log("INFO", "Executable", "image base validated: 0x%08lX",
-                static_cast<unsigned long>(imageBase));
     mouse_scaling_fix::Install(config.mouseScalingFix);
-    camera_trace::Initialize(config.highFrequencyCameraTrace);
     camera_fov::Install(config.useCorrectAspectFov, config.highFrequencyCamera);
     high_frequency_viewmodel::Install(
         config.highFrequencyCamera && config.highFrequencyViewmodel);
     dpi_awareness::Initialize(config.dpiAware);
-    if (config.borderlessFullscreen && !config.dpiAware) {
-        logger::Log("WARN", "BorderlessFullscreen",
-                    "DPIAware=0 may virtualize monitor coordinates and dimensions");
-    }
     const bool borderlessInitialized =
         borderless_fullscreen::Initialize(config.borderlessFullscreen,
                                           config.forceDesktopResolution);
@@ -307,23 +238,17 @@ void ApplyBhdPatches() {
         config.borderlessFullscreen && borderlessInitialized);
 
     if (config.adaptiveScreenCenter) {
-        logger::Log("INFO", "AdaptiveScreenCenter", "feature enabled");
         if (ApplyPatch(kDynamicResolutionCodeCavePatch)) {
             ApplyPatch(kDynamicResolutionCorePatch);
         }
-    } else {
-        logger::Log("INFO", "AdaptiveScreenCenter", "feature disabled");
     }
     if (config.scaleCursorClipToResolution) {
-        logger::Log("INFO", "ScaleCursorClipToResolution", "feature enabled");
         if (ApplyPatch(kInitialClipCursorCodeCavePatch) && ApplyPatch(kClipCursorCodeCavePatch)) {
             ApplyPatchGroup(kClipCursorPatches);
         }
-    } else {
-        logger::Log("INFO", "ScaleCursorClipToResolution", "feature disabled");
     }
     const bool rawInstalled =
-        raw_input::Install({config.rawMouseInput, config.rawInputStatisticsIntervalMs});
+        raw_input::Install(config.rawMouseInput);
     game_window::Configure(
         {config.rawMouseInput && rawInstalled, config.restoreCursorClip,
          config.borderlessFullscreen && borderlessInitialized,
@@ -347,13 +272,6 @@ HMODULE LoadRealDInput8() {
     }
 
     g_realDInput8 = LoadLibraryW(systemPath);
-    if (g_realDInput8 == nullptr) {
-        logger::Log("ERROR", "Proxy", "LoadLibraryW failed for system dinput8.dll: error=%lu",
-                    GetLastError());
-    } else {
-        logger::Log("INFO", "Proxy", "system dinput8.dll loaded at 0x%08lX",
-                    reinterpret_cast<unsigned long>(g_realDInput8));
-    }
     return g_realDInput8;
 }
 
@@ -373,11 +291,7 @@ Function GetRealProc(const char* name) {
     if (realDll == nullptr) {
         return nullptr;
     }
-    const auto function = reinterpret_cast<Function>(GetProcAddress(realDll, name));
-    if (function == nullptr) {
-        logger::Log("ERROR", "Proxy", "GetProcAddress(%s) failed: error=%lu", name, GetLastError());
-    }
-    return function;
+    return reinterpret_cast<Function>(GetProcAddress(realDll, name));
 }
 }  // namespace
 

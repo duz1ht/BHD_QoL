@@ -6,8 +6,8 @@ namespace cursor_clip {
 
 void Initialize(bool enabled, HWND window);
 void HandleFocusLost();
-bool HandleFocusGained(const char* trigger);
-void HandleWindowChanged(const char* trigger);
+bool HandleFocusGained();
+void HandleWindowChanged();
 void Shutdown();
 bool IsEnabled();
 bool IsReady();

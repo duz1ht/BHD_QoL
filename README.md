@@ -37,13 +37,6 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | `ScaleCursorClipToResolution` | `1` | Uses the current resolution when confining the cursor instead of fixed 640x480 bounds. |
 | `RestoreCursorClip` | `1` | Restores cursor confinement after Alt+Tab, focus, resolution, display, or window changes. Works independently of `RawMouseInput`. |
 
-### `[Logging]`
-
-| Option | Default | Description |
-| --- | :---: | --- |
-| `Enabled` | `0` | Creates a new `BHD_QoL_<date>_<time>_<pid>.log` beside `dfbhd.exe` for each session. Enable it to diagnose failures or features that were not applied. |
-| `RawInputStatisticsIntervalMs` | `5000` | Sets the interval, in milliseconds, for Raw Input and cursor-confinement diagnostics in the log. Accepts values from `1000` to `60000` and does not affect mouse latency. |
-
 Complete default configuration:
 
 ```ini
@@ -60,9 +53,6 @@ AdaptiveScreenCenter=1
 ScaleCursorClipToResolution=1
 RestoreCursorClip=1
 
-[Logging]
-Enabled=0
-RawInputStatisticsIntervalMs=5000
 ```
 
 `RawMouseInput` receives mouse packets on a dedicated message thread so movement
@@ -93,4 +83,4 @@ The resulting DLL must be named `dinput8.dll`.
 
 ## Compatibility
 
-Before applying each modification, the DLL verifies the expected bytes in the executable. If the `dfbhd.exe` version is incompatible, the affected modification is not applied. Set `Logging.Enabled=1` to check the results.
+Before applying each modification, the DLL verifies the expected bytes in the executable. If the `dfbhd.exe` version is incompatible, the affected modification is not applied.

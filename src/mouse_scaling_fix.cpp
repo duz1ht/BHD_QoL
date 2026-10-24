@@ -7,7 +7,6 @@
 #include <cstring>
 #include <limits>
 
-#include "logger.h"
 
 namespace mouse_scaling_fix {
 namespace {
@@ -32,10 +31,6 @@ struct FractionState {
 };
 
 FractionState g_state = {};
-volatile LONG g_traceSerial = 0;
-volatile LONG g_traceInput[2] = {};
-volatile LONG g_traceOutput[2] = {};
-volatile LONG g_traceScale = 0;
 
 int32_t OriginalScale(int32_t delta, int32_t scale) {
   const uint64_t product =
@@ -69,10 +64,6 @@ extern "C" int32_t __stdcall ScaleWithRemainder(int32_t delta, int32_t scale,
     g_state.remainder[safeAxis] = value - static_cast<int64_t>(output) * 65536;
   }
 
-  InterlockedExchange(&g_traceInput[safeAxis], delta);
-  InterlockedExchange(&g_traceOutput[safeAxis], output);
-  InterlockedExchange(&g_traceScale, scale);
-  if (safeAxis == 1) InterlockedIncrement(&g_traceSerial);
   return output;
 }
 
@@ -124,19 +115,9 @@ void AppendU32(unsigned char *&output, uint32_t value) {
   output += sizeof(value);
 }
 
-bool AppendRelativeCall(unsigned char *&output, const void *target) {
-  AppendByte(output, 0xE8);
-  const intptr_t displacement = static_cast<intptr_t>(reinterpret_cast<uintptr_t>(target)) -
-                                static_cast<intptr_t>(reinterpret_cast<uintptr_t>(output + 4));
-  if (displacement < std::numeric_limits<int32_t>::min() ||
-      displacement > std::numeric_limits<int32_t>::max())
-    return false;
-  AppendU32(output, static_cast<uint32_t>(static_cast<int32_t>(displacement)));
-  return true;
-}
-
-bool AppendRelativeJump(unsigned char *&output, const void *target) {
-  AppendByte(output, 0xE9);
+bool AppendRelativeBranch(unsigned char *&output, const void *target,
+                          unsigned char opcode) {
+  AppendByte(output, opcode);
   const intptr_t displacement = static_cast<intptr_t>(reinterpret_cast<uintptr_t>(target)) -
                                 static_cast<intptr_t>(reinterpret_cast<uintptr_t>(output + 4));
   if (displacement < std::numeric_limits<int32_t>::min() ||
@@ -157,7 +138,7 @@ bool InstallHook(unsigned char *hook) {
                                      0xFC, 0xFF, 0x75, 0xF4};
   memcpy(output, firstAxis, sizeof(firstAxis));
   output += sizeof(firstAxis);
-  if (!AppendRelativeCall(output, reinterpret_cast<const void *>(&ScaleWithRemainder))) {
+  if (!AppendRelativeBranch(output, reinterpret_cast<const void *>(&ScaleWithRemainder), 0xE8)) {
     VirtualFree(trampoline, 0, MEM_RELEASE);
     return false;
   }
@@ -168,14 +149,14 @@ bool InstallHook(unsigned char *hook) {
                                       0xFC, 0xFF, 0x75, 0xF0};
   memcpy(output, secondAxis, sizeof(secondAxis));
   output += sizeof(secondAxis);
-  if (!AppendRelativeCall(output, reinterpret_cast<const void *>(&ScaleWithRemainder))) {
+  if (!AppendRelativeBranch(output, reinterpret_cast<const void *>(&ScaleWithRemainder), 0xE8)) {
     VirtualFree(trampoline, 0, MEM_RELEASE);
     return false;
   }
   const unsigned char saveY[] = {0x59, 0x89, 0x45, 0xF0};
   memcpy(output, saveY, sizeof(saveY));
   output += sizeof(saveY);
-  if (!AppendRelativeJump(output, hook + kHookLength)) {
+  if (!AppendRelativeBranch(output, hook + kHookLength, 0xE9)) {
     VirtualFree(trampoline, 0, MEM_RELEASE);
     return false;
   }
@@ -186,7 +167,7 @@ bool InstallHook(unsigned char *hook) {
     return false;
   }
   unsigned char *patch = hook;
-  const bool jumpWritten = AppendRelativeJump(patch, trampoline);
+  const bool jumpWritten = AppendRelativeBranch(patch, trampoline, 0xE9);
   if (jumpWritten) {
     while (patch < hook + kHookLength)
       *patch++ = 0x90;
@@ -199,10 +180,6 @@ bool InstallHook(unsigned char *hook) {
     return false;
   }
 
-  logger::Log("INFO", "MouseScalingFix",
-              "hook installed address=0x%08lX trampoline=0x%08lX",
-              reinterpret_cast<unsigned long>(hook),
-              reinterpret_cast<unsigned long>(trampoline));
   return true;
 }
 } // namespace
@@ -232,32 +209,16 @@ int32_t PreviewScale(int32_t delta, int32_t scale, int32_t axis) {
   return static_cast<int32_t>(value / 65536);
 }
 
-void GetTraceSnapshot(TraceSnapshot* snapshot) {
-  if (snapshot == nullptr) return;
-  snapshot->serial = static_cast<unsigned long>(
-      InterlockedCompareExchange(&g_traceSerial, 0, 0));
-  snapshot->inputX = InterlockedCompareExchange(&g_traceInput[0], 0, 0);
-  snapshot->inputY = InterlockedCompareExchange(&g_traceInput[1], 0, 0);
-  snapshot->outputX = InterlockedCompareExchange(&g_traceOutput[0], 0, 0);
-  snapshot->outputY = InterlockedCompareExchange(&g_traceOutput[1], 0, 0);
-  snapshot->scale = InterlockedCompareExchange(&g_traceScale, 0, 0);
-}
 
 bool Install(bool enabled) {
   if (!enabled) {
-    logger::Log("INFO", "MouseScalingFix", "feature disabled");
     return false;
   }
-  logger::Log("INFO", "MouseScalingFix", "feature enabled");
   unsigned char *hook = FindScaleBlock(GetModuleHandleW(nullptr));
   if (hook == nullptr) {
-    logger::Log("ERROR", "MouseScalingFix",
-                "expected a unique scoped scaling signature");
     return false;
   }
   if (!InstallHook(hook)) {
-    logger::Log("ERROR", "MouseScalingFix", "hook installation failed: error=%lu",
-                GetLastError());
     return false;
   }
   return true;
