@@ -33,6 +33,7 @@ The INI file is optional. If it is missing, the DLL uses the default values show
 | `HighFrequencyCamera` | `1` | Applies Raw Input movement that arrived after the latest game update to the local first-person presentation camera. Requires `RawMouseInput=1`. |
 | `HighFrequencyViewmodel` | `1` | Makes the local first-person weapon and hands follow the presentation-camera yaw and pitch. Requires `HighFrequencyCamera=1`. |
 | `MouseScalingFix` | `1` | Fixes rounding of small mouse movements, especially noticeable when using scoped weapons. |
+| `MouseScaleQueryFix` | `1` | Makes `mousescale` without a value report the current setting without increasing it. |
 | `AdaptiveScreenCenter` | `1` | Calculates the screen center from the current resolution instead of using fixed values. |
 | `ScaleCursorClipToResolution` | `1` | Uses the current resolution when confining the cursor instead of fixed 640x480 bounds. |
 | `RestoreCursorClip` | `1` | Restores cursor confinement after Alt+Tab, focus, resolution, display, or window changes. Works independently of `RawMouseInput`. |
@@ -49,6 +50,7 @@ RawMouseInput=1
 HighFrequencyCamera=1
 HighFrequencyViewmodel=1
 MouseScalingFix=1
+MouseScaleQueryFix=1
 AdaptiveScreenCenter=1
 ScaleCursorClipToResolution=1
 RestoreCursorClip=1

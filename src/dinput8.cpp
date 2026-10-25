@@ -10,6 +10,7 @@
 #include "game_window.h"
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
+#include "mouse_scale_query.h"
 #include "camera_fov.h"
 #include "high_frequency_viewmodel.h"
 
@@ -30,6 +31,7 @@ struct PatchConfig {
     bool rawMouseInput = true;
     bool restoreCursorClip = true;
     bool mouseScalingFix = true;
+    bool mouseScaleQueryFix = true;
     bool useCorrectAspectFov = true;
     bool highFrequencyCamera = true;
     bool highFrequencyViewmodel = true;
@@ -207,6 +209,8 @@ PatchConfig LoadPatchConfig() {
     config.restoreCursorClip =
         BoolFromIni(iniPath, L"RestoreCursorClip", config.restoreCursorClip);
     config.mouseScalingFix = BoolFromIni(iniPath, L"MouseScalingFix", config.mouseScalingFix);
+    config.mouseScaleQueryFix =
+        BoolFromIni(iniPath, L"MouseScaleQueryFix", config.mouseScaleQueryFix);
     config.useCorrectAspectFov =
         BoolFromIni(iniPath, L"UseCorrectAspectFOV", config.useCorrectAspectFov);
     config.highFrequencyCamera =
@@ -228,6 +232,7 @@ void ApplyBhdPatches() {
         return;
     }
     mouse_scaling_fix::Install(config.mouseScalingFix);
+    mouse_scale_query::Install(config.mouseScaleQueryFix);
     camera_fov::Install(config.useCorrectAspectFov, config.highFrequencyCamera);
     high_frequency_viewmodel::Install(
         config.highFrequencyCamera && config.highFrequencyViewmodel);

@@ -4,7 +4,7 @@ project(BHD_QoL_DInput8 LANGUAGES CXX)
 add_library(dinput8 SHARED src/dinput8.cpp src/game_window.cpp
     src/cursor_clip.cpp src/cursor_visibility.cpp src/dpi_awareness.cpp
     src/borderless_fullscreen.cpp src/borderless_gamma.cpp
-    src/raw_input.cpp src/raw_input_math.cpp src/mouse_scaling_fix.cpp src/camera_fov.cpp src/camera_fov_math.cpp
+    src/raw_input.cpp src/raw_input_math.cpp src/mouse_scaling_fix.cpp src/mouse_scale_query.cpp src/camera_fov.cpp src/camera_fov_math.cpp
     src/high_frequency_camera.cpp src/high_frequency_camera_math.cpp
     src/high_frequency_viewmodel.cpp src/high_frequency_viewmodel_math.cpp
     src/dinput8.def)
