@@ -45,6 +45,11 @@ if(BUILD_TESTING)
     target_compile_features(raw_input_math_test PRIVATE cxx_std_17)
     add_test(NAME raw_input_math COMMAND raw_input_math_test)
 
+    add_executable(raw_input_packets_test tests/raw_input_packets_test.cpp)
+    target_include_directories(raw_input_packets_test PRIVATE src)
+    target_compile_features(raw_input_packets_test PRIVATE cxx_std_17)
+    add_test(NAME raw_input_packets COMMAND raw_input_packets_test)
+
     add_executable(high_frequency_viewmodel_math_test
         tests/high_frequency_viewmodel_math_test.cpp src/high_frequency_viewmodel_math.cpp)
     target_include_directories(high_frequency_viewmodel_math_test PRIVATE src)

@@ -59,9 +59,12 @@ RestoreCursorClip=1
 
 `RawMouseInput` receives mouse packets on a dedicated message thread so movement
 can reach presentation frames between the game's fixed simulation updates. Each
-`WM_INPUT` event is read directly and then `GetRawInputBuffer` drains any reports
-that accumulated in the queue, which prevents high polling-rate mice from being
-limited by one-message-at-a-time processing.
+`WM_INPUT` event is read directly and then `GetRawInputBuffer` reads queued reports
+in bounded batches. The buffered reader handles the different packet layout used
+by a 32-bit game on 64-bit Windows (WOW64). Only relative movement uses Raw Input;
+buttons, wheel and menu cursor coordinates keep the game's native Windows message
+path. The registration neither captures activation clicks nor receives background
+input, so other applications can be activated normally.
 `HighFrequencyCamera` projects the game's native two-update mouse smoothing, then
 uses the current sensitivity, vertical inversion, and scoped-view divisor. The
 temporary visual angles are restored immediately after the camera is built; the
