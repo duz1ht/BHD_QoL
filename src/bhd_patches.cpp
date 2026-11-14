@@ -35,6 +35,7 @@ struct PatchConfig {
     bool mouseScaleQueryFix = true;
     bool useCorrectAspectFov = true;
     bool highFrequencyCamera = true;
+    bool highFrequencyCameraPosition = true;
     bool highFrequencyViewmodel = true;
     bool dpiAware = true;
     bool borderlessFullscreen = true;
@@ -216,6 +217,8 @@ PatchConfig LoadPatchConfig() {
         BoolFromIni(iniPath, L"UseCorrectAspectFOV", config.useCorrectAspectFov);
     config.highFrequencyCamera =
         BoolFromIni(iniPath, L"HighFrequencyCamera", config.highFrequencyCamera);
+    config.highFrequencyCameraPosition = BoolFromIni(
+        iniPath, L"HighFrequencyCameraPosition", config.highFrequencyCameraPosition);
     config.highFrequencyViewmodel = BoolFromIni(
         iniPath, L"HighFrequencyViewmodel", config.highFrequencyViewmodel);
     config.dpiAware = BoolFromIni(iniPath, L"DPIAware", config.dpiAware);
@@ -234,9 +237,10 @@ void ApplyBhdPatches() {
     }
     mouse_scaling_fix::Install(config.mouseScalingFix);
     mouse_scale_query::Install(config.mouseScaleQueryFix);
-    camera_fov::Install(config.useCorrectAspectFov, config.highFrequencyCamera);
+    camera_fov::Install(config.useCorrectAspectFov, config.highFrequencyCamera,
+                        config.highFrequencyCameraPosition);
     high_frequency_viewmodel::Install(
-        config.highFrequencyCamera && config.highFrequencyViewmodel);
+        (config.highFrequencyCamera || config.highFrequencyCameraPosition) && config.highFrequencyViewmodel);
     dpi_awareness::Initialize(config.dpiAware);
     const bool borderlessInitialized =
         borderless_fullscreen::Initialize(config.borderlessFullscreen,

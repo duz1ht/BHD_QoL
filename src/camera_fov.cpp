@@ -14,6 +14,7 @@
 #endif
 
 #include "high_frequency_camera.h"
+#include "camera_position.h"
 #include "raw_input.h"
 #include "mouse_scaling_fix.h"
 
@@ -85,10 +86,16 @@ void __cdecl HookBuildCamera(void *destinationCamera, void *sourceCamera) {
     const uintptr_t caller =
         reinterpret_cast<uintptr_t>(__builtin_return_address(0));
 #endif
-    int32_t *cameraFov = sourceCamera == nullptr
-                             ? nullptr
-                             : reinterpret_cast<int32_t *>(
-                                   static_cast<unsigned char *>(sourceCamera) + kCameraFovOffset);
+    alignas(16) unsigned char privateCamera[0x40] = {};
+    const bool mainRendererCamera = caller == g_moduleBase + kMainRendererReturnRva;
+    void* effectiveCamera = sourceCamera;
+    if (mainRendererCamera && sourceCamera != nullptr) {
+        std::memcpy(privateCamera, sourceCamera, sizeof(privateCamera));
+        effectiveCamera = privateCamera;
+        high_frequency_camera::Apply(effectiveCamera);
+    }
+    int32_t* cameraFov = effectiveCamera == nullptr ? nullptr : reinterpret_cast<int32_t*>(
+        static_cast<unsigned char*>(effectiveCamera) + kCameraFovOffset);
     const auto *currentFov =
         reinterpret_cast<const volatile int32_t *>(g_moduleBase + kCurrentFovRva);
     const auto *targetFov =
@@ -101,35 +108,9 @@ void __cdecl HookBuildCamera(void *destinationCamera, void *sourceCamera) {
         *cameraMode == 0 &&
         *currentFov == kVanillaFovQ16 && *targetFov == kVanillaFovQ16 &&
         *cameraFov == kVanillaFovQ16;
-    const int32_t originalFov = overrideFov ? *cameraFov : 0;
-    if (overrideFov) {
-        *cameraFov = GetCorrectedFov();
-    }
+    if (overrideFov) *cameraFov = GetCorrectedFov();
+    g_originalBuildCamera(destinationCamera, effectiveCamera);
 
-    int32_t originalYaw = 0;
-    int32_t originalPitch = 0;
-    bool overrideLook = false;
-    const bool mainRendererCamera = caller == g_moduleBase + kMainRendererReturnRva;
-    if (mainRendererCamera && sourceCamera != nullptr) {
-        auto* camera = static_cast<unsigned char*>(sourceCamera);
-        originalYaw = *reinterpret_cast<int32_t*>(camera + 0x10);
-        originalPitch = *reinterpret_cast<int32_t*>(camera + 0x14);
-        overrideLook = high_frequency_camera::Apply(sourceCamera);
-    }
-
-    g_originalBuildCamera(destinationCamera, sourceCamera);
-
-
-    if (overrideLook) {
-        auto* camera = static_cast<unsigned char*>(sourceCamera);
-        *reinterpret_cast<int32_t*>(camera + 0x10) = originalYaw;
-        *reinterpret_cast<int32_t*>(camera + 0x14) = originalPitch;
-    }
-
-
-    if (overrideFov) {
-        *cameraFov = originalFov;
-    }
 }
 
 bool InstallHook(unsigned char *hook) {
@@ -169,13 +150,15 @@ bool InstallHook(unsigned char *hook) {
 }
 } // namespace
 
-bool Install(bool enabled, bool highFrequencyCameraEnabled) {
+bool Install(bool enabled, bool highFrequencyCameraEnabled, bool cameraPositionEnabled) {
     g_fovEnabled = enabled;
-    high_frequency_camera::SetEnabled(highFrequencyCameraEnabled);
-    if (!enabled && !highFrequencyCameraEnabled) {
+    high_frequency_camera::SetEnabled(false);
+    if (!enabled && !highFrequencyCameraEnabled && !cameraPositionEnabled) {
         return false;
     }
     if (g_installed) {
+        high_frequency_camera::SetEnabled(highFrequencyCameraEnabled);
+        camera_position::Install(cameraPositionEnabled);
         return true;
     }
 
@@ -190,6 +173,8 @@ bool Install(bool enabled, bool highFrequencyCameraEnabled) {
     }
 
     g_installed = true;
+    high_frequency_camera::SetEnabled(highFrequencyCameraEnabled);
+    camera_position::Install(cameraPositionEnabled);
     return true;
 }
 

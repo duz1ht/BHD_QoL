@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "high_frequency_camera_math.h"
+#include "camera_position.h"
 #include "mouse_scaling_fix.h"
 #include "raw_input.h"
 
@@ -64,9 +65,8 @@ void SetEnabled(bool enabled) {
 }
 
 bool Apply(void* sourceCamera) {
-    if (!g_enabled) {
-        return false;
-    }
+    InterlockedExchange(&g_cameraPoseValid, 0);
+    if (!g_enabled && !camera_position::IsEnabled()) return false;
     if (sourceCamera == nullptr) {
         return false;
     }
@@ -90,15 +90,17 @@ bool Apply(void* sourceCamera) {
         g_simulationCameraPose[index] = reinterpret_cast<int32_t*>(camera)[index + 1];
         g_presentationCameraPose[index] = g_simulationCameraPose[index];
     }
-    InterlockedExchange(&g_cameraPoseValid, 1);
+    const bool positionChanged = camera_position::Apply(sourceCamera);
 
     LONG projectedX = 0;
     LONG projectedY = 0;
-    if (!raw_input::GetProjectedNativeMovement(&projectedX, &projectedY)) {
-        return false;
-    }
-    if (projectedX == 0 && projectedY == 0) {
-        return false;
+    if (!g_enabled || !raw_input::GetProjectedNativeMovement(&projectedX, &projectedY) ||
+        (projectedX == 0 && projectedY == 0)) {
+        for (int index = 0; index < 6; ++index) {
+            g_presentationCameraPose[index] = reinterpret_cast<int32_t*>(camera)[index + 1];
+        }
+        InterlockedExchange(&g_cameraPoseValid, 1);
+        return positionChanged;
     }
 
     const int16_t yawCommand = static_cast<int16_t>(
@@ -121,7 +123,8 @@ bool Apply(void* sourceCamera) {
     }
     const int32_t pitchOffset = *cameraPitch - originalPitch;
 
-    return yawOffset != 0 || pitchOffset != 0;
+    InterlockedExchange(&g_cameraPoseValid, 1);
+    return positionChanged || yawOffset != 0 || pitchOffset != 0;
 }
 
 bool GetPresentationCameraPose(int32_t simulationPose[6], int32_t presentationPose[6]) {

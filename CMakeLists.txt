@@ -6,6 +6,7 @@ add_library(winmm SHARED src/winmm_proxy.cpp src/bhd_patches.cpp src/game_window
     src/borderless_fullscreen.cpp src/borderless_gamma.cpp
     src/raw_input.cpp src/raw_input_math.cpp src/mouse_scaling_fix.cpp src/mouse_scale_query.cpp src/camera_fov.cpp src/camera_fov_math.cpp
     src/high_frequency_camera.cpp src/high_frequency_camera_math.cpp
+    src/camera_position.cpp src/camera_position_math.cpp
     src/high_frequency_viewmodel.cpp src/high_frequency_viewmodel_math.cpp
     src/winmm.def)
 target_compile_features(winmm PRIVATE cxx_std_17)
@@ -29,6 +30,25 @@ configure_file(winmm.ini winmm.ini COPYONLY)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(camera_position_math_test tests/camera_position_math_test.cpp src/camera_position_math.cpp)
+    target_include_directories(camera_position_math_test PRIVATE src)
+    target_compile_features(camera_position_math_test PRIVATE cxx_std_17)
+    add_test(NAME camera_position_math COMMAND camera_position_math_test)
+
+    add_executable(camera_position_hook_test tests/camera_position_hook_test.cpp)
+    target_include_directories(camera_position_hook_test PRIVATE src)
+    target_compile_features(camera_position_hook_test PRIVATE cxx_std_17)
+    add_test(NAME camera_position_hook COMMAND camera_position_hook_test)
+
+    add_executable(camera_position_backend_test tests/camera_position_backend_test.cpp src/camera_position_math.cpp)
+    target_include_directories(camera_position_backend_test PRIVATE src)
+    target_compile_features(camera_position_backend_test PRIVATE cxx_std_17)
+    target_compile_definitions(camera_position_backend_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    # The backend test uses a synthetic module image and controlled OS state.
+    add_test(NAME camera_position_backend COMMAND camera_position_backend_test)
+    add_test(NAME camera_position_signature COMMAND camera_position_backend_test signature)
+    add_test(NAME camera_position_rollback COMMAND camera_position_backend_test rollback)
+    set_tests_properties(camera_position_backend camera_position_signature camera_position_rollback PROPERTIES TIMEOUT 20)
     add_executable(winmm_proxy_test tests/winmm_proxy_test.cpp)
     target_include_directories(winmm_proxy_test PRIVATE src)
     target_compile_features(winmm_proxy_test PRIVATE cxx_std_17)

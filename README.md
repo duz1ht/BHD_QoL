@@ -39,7 +39,8 @@ that patch the same game code still require compatibility testing. Only one
 | `DPIAware` | `1` | Prevents Windows DPI scaling from distorting window, monitor, and cursor coordinates. Recommended for borderless mode. |
 | `RawMouseInput` | `1` | Uses Windows Raw Input for more reliable relative mouse input while preserving the game's sensitivity, inversion, and bindings. |
 | `HighFrequencyCamera` | `1` | Applies Raw Input movement that arrived after the latest game update to the local first-person presentation camera. Requires `RawMouseInput=1`. |
-| `HighFrequencyViewmodel` | `1` | Makes the local first-person weapon and hands follow the presentation-camera yaw and pitch. Requires `HighFrequencyCamera=1`. |
+| `HighFrequencyCameraPosition` | `1` | Interpolates on-foot first-person camera XYZ to smooth static scenery while walking/strafing. Independent of Raw Input and mouse rotation. Adds up to one movement update of visual position lag. |
+| `HighFrequencyViewmodel` | `1` | Makes the local first-person weapon and hands follow the presentation camera, with interpolation of weapon-relative motion and bones. Requires `HighFrequencyCamera=1` or `HighFrequencyCameraPosition=1`. |
 | `MouseScalingFix` | `1` | Fixes rounding of small mouse movements, especially noticeable when using scoped weapons. |
 | `MouseScaleQueryFix` | `1` | Makes `mousescale` without a value report the current setting without increasing it. |
 | `AdaptiveScreenCenter` | `1` | Calculates the screen center from the current resolution instead of using fixed values. |
@@ -56,6 +57,7 @@ UseCorrectAspectFOV=1
 DPIAware=1
 RawMouseInput=1
 HighFrequencyCamera=1
+HighFrequencyCameraPosition=1
 HighFrequencyViewmodel=1
 MouseScalingFix=1
 MouseScaleQueryFix=1
@@ -79,9 +81,29 @@ temporary visual angles are restored immediately after the camera is built; the
 simulation consumes each movement once through its original path. The feature
 currently applies to the local player in first person. Third-person, vehicle,
 and spectator cameras retain their native behavior.
-`HighFrequencyViewmodel` applies that presentation-only yaw and pitch difference to a
-temporary copy of the first-person weapon pose while it is drawn. Weapon simulation,
-animations, firing, and networking remain native.
+
+`HighFrequencyCameraPosition` captures the local player's position after verified
+native movement producers and interpolates XYZ using the game's render phase.
+This smooths the apparent movement of fixed scenery such as poles and walls
+while strafing or walking diagonally. It leaves mouse yaw/pitch on the existing
+Raw Input path. Only the private camera description used for rendering changes;
+map assets, actor positions, collision, firing and networking retain their native
+state. Native eye-height and camera offsets are preserved.
+
+The option operates independently of `RawMouseInput` and `HighFrequencyCamera`.
+It adds up to one movement interval of visual position lag: normally 4 ms for
+the fast producer, or 16 ms for a supported slow producer. Disable it with
+`HighFrequencyCameraPosition=0` to retain native camera translation. It does not
+interpolate other players/vehicles, third-person cameras or skeletal animations
+of world objects. Pauses, focus loss, target/mount changes, teleports, clock
+discontinuities and unobserved actor motion invalidate its history. Unknown
+executable bytes disable the option before any of its three hooks are written.
+
+`HighFrequencyViewmodel` combines the presentation camera with interpolated
+weapon-relative motion and bone transforms in a private palette. Position
+smoothing is shared with the weapon, including when raw mouse rotation is off.
+History is rebased across position discontinuities. Weapon simulation, firing
+and networking remain native.
 
 ## Building
 

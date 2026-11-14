@@ -8,6 +8,7 @@
 #include <limits>
 
 #include "high_frequency_camera.h"
+#include "camera_position.h"
 #include "high_frequency_viewmodel_math.h"
 #include "raw_input.h"
 
@@ -40,6 +41,7 @@ struct PaletteHistory {
     const void* model = nullptr;
     bool ready = false;
     unsigned long simulationSerial = 0;
+    uint32_t positionEpoch = 0;
     LARGE_INTEGER tickStart = {};
     int boneCount = 0;
     float previousRootRelative[16] = {};
@@ -139,17 +141,21 @@ double UpdateHistory(PaletteHistory* history, const float* palette,
     LARGE_INTEGER now = {};
     QueryPerformanceCounter(&now);
     if (g_clockFrequency.QuadPart == 0) QueryPerformanceFrequency(&g_clockFrequency);
-    const unsigned long serial = raw_input::GetSimulationSerial();
+    const unsigned long serial = camera_position::IsEnabled() ?
+        camera_position::GetSimulationSerial() : raw_input::GetSimulationSerial();
+    const uint32_t positionEpoch = camera_position::IsEnabled() ? camera_position::GetHistoryEpoch() : 0;
     float captured[kMaxViewmodelBones * 16] = {};
     ConvertToLocalPalette(palette, boneCount, captured);
     const size_t paletteBytes = static_cast<size_t>(boneCount) * 16 * sizeof(float);
 
-    if (!history->ready || history->boneCount != boneCount) {
+    if (!history->ready || history->boneCount != boneCount ||
+        history->positionEpoch != positionEpoch || serial - history->simulationSerial > 1) {
         std::memcpy(history->previousRootRelative, rootRelative, sizeof(history->previousRootRelative));
         std::memcpy(history->currentRootRelative, rootRelative, sizeof(history->currentRootRelative));
         std::memcpy(history->previousLocal, captured, paletteBytes);
         std::memcpy(history->currentLocal, captured, paletteBytes);
         history->simulationSerial = serial;
+        history->positionEpoch = positionEpoch;
         history->tickStart = now;
         history->boneCount = boneCount;
         history->ready = true;
@@ -163,6 +169,7 @@ double UpdateHistory(PaletteHistory* history, const float* palette,
         std::memcpy(history->previousLocal, history->currentLocal, paletteBytes);
         std::memcpy(history->currentLocal, captured, paletteBytes);
         history->simulationSerial = serial;
+        history->positionEpoch = positionEpoch;
         history->tickStart = now;
     }
     const double elapsed = static_cast<double>(now.QuadPart - history->tickStart.QuadPart) /
