@@ -1,0 +1,3 @@
+#include "player_config_resource.h"
+
+IDI_APP_ICON ICON "../assets/bhd_player_config.ico"

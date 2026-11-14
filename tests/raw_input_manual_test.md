@@ -4,7 +4,7 @@ Run these in the actual game with the rebuilt 32-bit DLL. Packet unit tests do
 not establish in-game firing, focus behavior or frame-time stability.
 
 Start with `RawMouseInput=1` and **every other option explicitly set to `0`** in
-`winmm.ini`; omitted options default to enabled. Repeat with `RawMouseInput=0`
+`bhd_player_config.ini`; omitted options default to enabled. Repeat with `RawMouseInput=0`
 as the control, then with the normal configuration.
 
 1. Fire individual shots and hold/release automatic fire while moving the mouse,

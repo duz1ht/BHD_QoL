@@ -27,7 +27,16 @@ set_target_properties(winmm PROPERTIES
 
 target_compile_definitions(winmm PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(winmm PRIVATE shlwapi)
-configure_file(winmm.ini winmm.ini COPYONLY)
+
+add_executable(bhd_player_config WIN32
+    src/player_config.cpp
+    src/player_config.rc)
+target_compile_features(bhd_player_config PRIVATE cxx_std_17)
+target_compile_definitions(bhd_player_config PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_link_libraries(bhd_player_config PRIVATE comctl32 shlwapi)
+set_target_properties(bhd_player_config PROPERTIES OUTPUT_NAME "BHD Player Config")
+
+configure_file(bhd_player_config.ini bhd_player_config.ini COPYONLY)
 
 include(CTest)
 if(BUILD_TESTING)

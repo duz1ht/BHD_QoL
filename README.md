@@ -1,12 +1,13 @@
 # BHD QoL
 
-A `winmm.dll` proxy with quality-of-life improvements for **Delta Force: Black Hawk Down** (`dfbhd.exe`). The DLL forwards Windows multimedia calls to the original 32-bit system WinMM library and applies only the options enabled in `winmm.ini`.
+A `winmm.dll` proxy with quality-of-life improvements for **Delta Force: Black Hawk Down** (`dfbhd.exe`). The DLL forwards Windows multimedia calls to the original 32-bit system WinMM library and applies only the options enabled in `bhd_player_config.ini`.
 
 ## Installation
 
 1. Copy the **32-bit** `winmm.dll` to the same directory as `dfbhd.exe`.
-2. Copy `winmm.ini` to that directory if you want to change the settings.
-3. Launch the game normally.
+2. Copy `BHD Player Config.exe` and `bhd_player_config.ini` to the same directory.
+3. Open `BHD Player Config.exe`, adjust the options and click **Save**.
+4. Launch the game normally. Restart it after changing settings.
 
 Example:
 
@@ -14,20 +15,23 @@ Example:
 Game directory/
 ├── dfbhd.exe
 ├── winmm.dll
-└── winmm.ini
+├── BHD Player Config.exe
+└── bhd_player_config.ini
 ```
 
-The INI file is optional. If it is missing, the DLL uses the default values shown below. Use `1` to enable an option and `0` to disable it.
+The configurator always reads and writes `bhd_player_config.ini` beside its own executable. The DLL reads that same filename from the game directory. Keep the DLL, configurator and INI together. The INI file is optional; if it is missing, the DLL uses the default values shown below. The configurator can create it by clicking **Save**. You can also edit it manually, using `1` to enable an option and `0` to disable it.
+
+The application includes **Settings**, **Crosshair**, **HUD** and **Fonts** tabs. Settings contains the options currently supported by the DLL. The other tabs reserve the interface for their respective features as they are implemented.
 
 When upgrading from the old BHD QoL proxy, remove **this project's old**
 `dinput8.dll` before installing `winmm.dll`, so the patches are not applied twice.
-Copy your previous settings from `dinput8.ini` to `winmm.ini`. The new proxy does
+Copy your previous settings from `dinput8.ini` to `bhd_player_config.ini`. The new proxy does
 not read `dinput8.ini`; another mod can use that filename independently. A
 `dinput8.dll` supplied by another mod can coexist with this proxy, although mods
 that patch the same game code still require compatibility testing. Only one
 `winmm.dll` proxy can occupy the game directory.
 
-## `winmm.ini` options
+## `bhd_player_config.ini` options
 
 ### `[PatchGroups]`
 
@@ -140,8 +144,9 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=mingw32-toolchain.cmake
 cmake --build build
 ```
 
-The resulting DLL must be named `winmm.dll`. CMake also copies `winmm.ini` into
-the build directory. A 64-bit build is rejected because `dfbhd.exe` is 32-bit.
+The build produces `winmm.dll` and `BHD Player Config.exe`. CMake also copies
+`bhd_player_config.ini` into the build directory. A 64-bit build is rejected because
+`dfbhd.exe` is 32-bit.
 
 Run the regression suite with:
 

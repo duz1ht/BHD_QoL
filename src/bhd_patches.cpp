@@ -192,12 +192,12 @@ void BuildIniPath(wchar_t* iniPath, DWORD size) {
     iniPath[0] = L'\0';
     const DWORD length = GetModuleFileNameW(nullptr, iniPath, size);
     if (length == 0 || length >= size) {
-        lstrcpynW(iniPath, L".\\winmm.ini", size);
+        lstrcpynW(iniPath, L".\\bhd_player_config.ini", size);
         return;
     }
 
     PathRemoveFileSpecW(iniPath);
-    PathAppendW(iniPath, L"winmm.ini");
+    PathAppendW(iniPath, L"bhd_player_config.ini");
 }
 
 PatchConfig LoadPatchConfig() {
