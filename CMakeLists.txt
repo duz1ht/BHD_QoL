@@ -8,6 +8,7 @@ add_library(winmm SHARED src/winmm_proxy.cpp src/bhd_patches.cpp src/game_window
     src/high_frequency_camera.cpp src/high_frequency_camera_math.cpp
     src/camera_position.cpp src/camera_position_math.cpp
     src/high_frequency_viewmodel.cpp src/high_frequency_viewmodel_math.cpp
+    src/allow_high_resolution_fonts.cpp src/fnt_layout.cpp
     src/winmm.def)
 target_compile_features(winmm PRIVATE cxx_std_17)
 
@@ -30,6 +31,17 @@ configure_file(winmm.ini winmm.ini COPYONLY)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(fnt_layout_test tests/fnt_layout_test.cpp src/fnt_layout.cpp)
+    target_include_directories(fnt_layout_test PRIVATE src)
+    target_compile_features(fnt_layout_test PRIVATE cxx_std_17)
+    add_test(NAME fnt_layout COMMAND fnt_layout_test)
+
+    add_executable(allow_high_resolution_fonts_test tests/allow_high_resolution_fonts_test.cpp src/fnt_layout.cpp)
+    target_include_directories(allow_high_resolution_fonts_test PRIVATE src)
+    target_compile_features(allow_high_resolution_fonts_test PRIVATE cxx_std_17)
+    target_compile_definitions(allow_high_resolution_fonts_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    add_test(NAME allow_high_resolution_fonts COMMAND allow_high_resolution_fonts_test)
+
     add_executable(camera_position_math_test tests/camera_position_math_test.cpp src/camera_position_math.cpp)
     target_include_directories(camera_position_math_test PRIVATE src)
     target_compile_features(camera_position_math_test PRIVATE cxx_std_17)

@@ -37,6 +37,7 @@ that patch the same game code still require compatibility testing. Only one
 | `ForceDesktopResolution` | `1` | With `BorderlessFullscreen=1`, uses the monitor resolution as the internal render resolution. At `0`, the resolution selected in the game is stretched to fill the screen. Has no effect when borderless mode is disabled. |
 | `UseCorrectAspectFOV` | `1` | Corrects the field of view for internal render resolutions wider than 4:3 without changing zoom, scopes, or special cameras. |
 | `DPIAware` | `1` | Prevents Windows DPI scaling from distorting window, monitor, and cursor coordinates. Recommended for borderless mode. |
+| `AllowHighResolutionFonts` | `1` | Detects the atlas dimensions of each loaded FNT0 file independently, allowing stock and higher-resolution fonts to coexist. Does not create or replace font assets. |
 | `RawMouseInput` | `1` | Uses Windows Raw Input for more reliable relative mouse input while preserving the game's sensitivity, inversion, and bindings. |
 | `HighFrequencyCamera` | `1` | Applies Raw Input movement that arrived after the latest game update to the local first-person presentation camera. Requires `RawMouseInput=1`. |
 | `HighFrequencyCameraPosition` | `1` | Interpolates on-foot first-person camera XYZ to smooth static scenery while walking/strafing. Independent of Raw Input and mouse rotation. Adds up to one movement update of visual position lag. |
@@ -55,6 +56,7 @@ BorderlessFullscreen=1
 ForceDesktopResolution=1
 UseCorrectAspectFOV=1
 DPIAware=1
+AllowHighResolutionFonts=1
 RawMouseInput=1
 HighFrequencyCamera=1
 HighFrequencyCameraPosition=1
@@ -66,6 +68,30 @@ ScaleCursorClipToResolution=1
 RestoreCursorClip=1
 
 ```
+
+`AllowHighResolutionFonts` accepts square, 32-bit FNT0 pages of 256, 512, 1024,
+2048 or 4096 pixels per side, with up to 16 equally sized pages per file. A
+256x256 font can coexist with a 1024x1024 font. Detection uses the exact file
+length reported by the game's loader for loose files and PFF resources; it runs
+when a font loads, never while drawing text. Invalid tracked files are rejected.
+Set the option to `0` and restart to retain the unmodified native font loader.
+
+The supplied pixels are uploaded at their detected dimensions through the native
+texture manager. Normalized UVs, reference width, spacing and logical text size
+remain defined by the FNT. HD replacements must preserve those logical metrics
+to retain the original layout. No vector fonts, sharpening, font substitution or
+aspect-ratio correction are applied. The device's texture limits can reduce the
+actual GPU texture resolution.
+
+The native font loader also has an optional CPU drawing path which assumes a
+256x256 pixel buffer. For HD files, the DLL stages a logical 256x256 mirror for
+that path and redirects GPU uploads to the original HD pages. This avoids
+misreading subsequent pages or changing CPU-buffer ownership. If an HD GPU upload
+fails, the same logical mirror supplies a lower-resolution fallback. Original
+256x256 FNTs use the original loading path without a staging copy.
+
+See [dynamic FNT loading](docs/dynamic_fnt_loading.md) for format requirements,
+implementation details and the automated/manual validation status.
 
 `RawMouseInput` receives mouse packets on a dedicated message thread so movement
 can reach presentation frames between the game's fixed simulation updates. Each

@@ -15,6 +15,7 @@
 #include "mouse_scale_query.h"
 #include "camera_fov.h"
 #include "high_frequency_viewmodel.h"
+#include "allow_high_resolution_fonts.h"
 
 namespace {
 constexpr uintptr_t kImageBase = 0x400000;
@@ -40,6 +41,7 @@ struct PatchConfig {
     bool dpiAware = true;
     bool borderlessFullscreen = true;
     bool forceDesktopResolution = true;
+    bool allowHighResolutionFonts = true;
 };
 
 struct ByteSpan {
@@ -226,6 +228,8 @@ PatchConfig LoadPatchConfig() {
         BoolFromIni(iniPath, L"BorderlessFullscreen", config.borderlessFullscreen);
     config.forceDesktopResolution =
         BoolFromIni(iniPath, L"ForceDesktopResolution", config.forceDesktopResolution);
+    config.allowHighResolutionFonts =
+        BoolFromIni(iniPath, L"AllowHighResolutionFonts", config.allowHighResolutionFonts);
     return config;
 }
 
@@ -237,6 +241,7 @@ void ApplyBhdPatches() {
     }
     mouse_scaling_fix::Install(config.mouseScalingFix);
     mouse_scale_query::Install(config.mouseScaleQueryFix);
+    allow_high_resolution_fonts::Install(config.allowHighResolutionFonts);
     camera_fov::Install(config.useCorrectAspectFov, config.highFrequencyCamera,
                         config.highFrequencyCameraPosition);
     high_frequency_viewmodel::Install(
