@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "bhd_patches.h"
+
 #include "dpi_awareness.h"
 #include "borderless_fullscreen.h"
 #include "borderless_gamma.h"
@@ -23,7 +25,6 @@ constexpr uintptr_t kDynamicResolutionCodeCave = 0x5E4879;
 constexpr uintptr_t kInitialClipCursorCodeCave = 0x5E4912;
 constexpr uintptr_t kClipCursorCodeCave = 0x5E492B;
 
-HMODULE g_realDInput8 = nullptr;
 volatile LONG g_initialized = 0;
 struct PatchConfig {
     bool adaptiveScreenCenter = true;
@@ -188,12 +189,12 @@ void BuildIniPath(wchar_t* iniPath, DWORD size) {
     iniPath[0] = L'\0';
     const DWORD length = GetModuleFileNameW(nullptr, iniPath, size);
     if (length == 0 || length >= size) {
-        lstrcpynW(iniPath, L".\\dinput8.ini", size);
+        lstrcpynW(iniPath, L".\\winmm.ini", size);
         return;
     }
 
     PathRemoveFileSpecW(iniPath);
-    PathAppendW(iniPath, L"dinput8.ini");
+    PathAppendW(iniPath, L"winmm.ini");
 }
 
 PatchConfig LoadPatchConfig() {
@@ -262,87 +263,29 @@ void ApplyBhdPatches() {
          config.mouseScalingFix});
 }
 
-HMODULE LoadRealDInput8() {
-    if (g_realDInput8 != nullptr) {
-        return g_realDInput8;
-    }
-
-    wchar_t systemPath[MAX_PATH] = {};
-    const UINT length = GetSystemDirectoryW(systemPath, MAX_PATH);
-    if (length == 0 || length >= MAX_PATH) {
-        return nullptr;
-    }
-
-    if (!PathAppendW(systemPath, L"dinput8.dll")) {
-        return nullptr;
-    }
-
-    g_realDInput8 = LoadLibraryW(systemPath);
-    return g_realDInput8;
-}
-
-void EnsureInitialized() {
-    if (InterlockedCompareExchange(&g_initialized, 1, 0) == 0) {
-        ApplyBhdPatches();
-        LoadRealDInput8();
-        InterlockedExchange(&g_initialized, 2);
-        return;
-    }
-    while (InterlockedCompareExchange(&g_initialized, 2, 2) != 2) Sleep(0);
-}
-
-template <typename Function>
-Function GetRealProc(const char* name) {
-    HMODULE realDll = LoadRealDInput8();
-    if (realDll == nullptr) {
-        return nullptr;
-    }
-    return reinterpret_cast<Function>(GetProcAddress(realDll, name));
-}
 }  // namespace
 
-extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE hinst, DWORD version, REFIID riidltf,
-                                              LPVOID* out, LPUNKNOWN outer) {
-    EnsureInitialized();
-    using DirectInput8CreateFn = HRESULT(WINAPI*)(HINSTANCE, DWORD, REFIID, LPVOID*, LPUNKNOWN);
-    const auto real = GetRealProc<DirectInput8CreateFn>("DirectInput8Create");
-    if (real == nullptr) {
-        return E_FAIL;
-    }
-    return real(hinst, version, riidltf, out, outer);
+namespace bhd_patches {
+void InitializeForWinmmCall(uintptr_t returnAddress) {
+    // These are the two timer calls in the supported executable's startup path.
+    // Calls from DLL initialization, timer callbacks and unrelated executables
+    // must only forward to WinMM, without installing patches or starting threads.
+    if (returnAddress != 0x00569F7A && returnAddress != 0x00569FC5) return;
+    const auto* image = reinterpret_cast<const unsigned char*>(GetModuleHandleW(nullptr));
+    if (reinterpret_cast<uintptr_t>(image) != kImageBase) return;
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 ||
+        dos->e_lfanew > 0x1000) return;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS32*>(image + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE ||
+        nt->FileHeader.Machine != IMAGE_FILE_MACHINE_I386 ||
+        nt->OptionalHeader.SizeOfImage < 0x00B65600) return;
+    const uintptr_t importAddress = returnAddress == 0x00569F7A ? 0x00611374 : 0x00611370;
+    const auto* call = reinterpret_cast<const unsigned char*>(returnAddress - 6);
+    if (call[0] != 0xFF || call[1] != 0x15 ||
+        *reinterpret_cast<const uint32_t*>(call + 2) != importAddress) return;
+    if (InterlockedCompareExchange(&g_initialized, 1, 0) != 0) return;
+    ApplyBhdPatches();
+    InterlockedExchange(&g_initialized, 2);
 }
-
-extern "C" HRESULT WINAPI DllCanUnloadNow() {
-    EnsureInitialized();
-    using Fn = HRESULT(WINAPI*)();
-    const auto real = GetRealProc<Fn>("DllCanUnloadNow");
-    return real != nullptr ? real() : S_FALSE;
-}
-
-extern "C" HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID* out) {
-    EnsureInitialized();
-    using Fn = HRESULT(WINAPI*)(REFCLSID, REFIID, LPVOID*);
-    const auto real = GetRealProc<Fn>("DllGetClassObject");
-    return real != nullptr ? real(rclsid, riid, out) : E_FAIL;
-}
-
-extern "C" HRESULT WINAPI DllRegisterServer() {
-    EnsureInitialized();
-    using Fn = HRESULT(WINAPI*)();
-    const auto real = GetRealProc<Fn>("DllRegisterServer");
-    return real != nullptr ? real() : E_FAIL;
-}
-
-extern "C" HRESULT WINAPI DllUnregisterServer() {
-    EnsureInitialized();
-    using Fn = HRESULT(WINAPI*)();
-    const auto real = GetRealProc<Fn>("DllUnregisterServer");
-    return real != nullptr ? real() : E_FAIL;
-}
-
-BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
-    if (reason == DLL_PROCESS_ATTACH) {
-        DisableThreadLibraryCalls(module);
-    }
-    return TRUE;
-}
+}  // namespace bhd_patches

@@ -1,11 +1,11 @@
 # BHD QoL
 
-A `dinput8.dll` proxy with quality-of-life improvements for **Delta Force: Black Hawk Down** (`dfbhd.exe`). The DLL loads the original Windows DirectInput library and applies only the options enabled in `dinput8.ini`.
+A `winmm.dll` proxy with quality-of-life improvements for **Delta Force: Black Hawk Down** (`dfbhd.exe`). The DLL forwards Windows multimedia calls to the original 32-bit system WinMM library and applies only the options enabled in `winmm.ini`.
 
 ## Installation
 
-1. Copy `dinput8.dll` to the same directory as `dfbhd.exe`.
-2. Copy `dinput8.ini` to that directory if you want to change the settings.
+1. Copy the **32-bit** `winmm.dll` to the same directory as `dfbhd.exe`.
+2. Copy `winmm.ini` to that directory if you want to change the settings.
 3. Launch the game normally.
 
 Example:
@@ -13,13 +13,21 @@ Example:
 ```text
 Game directory/
 ├── dfbhd.exe
-├── dinput8.dll
-└── dinput8.ini
+├── winmm.dll
+└── winmm.ini
 ```
 
 The INI file is optional. If it is missing, the DLL uses the default values shown below. Use `1` to enable an option and `0` to disable it.
 
-## `dinput8.ini` options
+When upgrading from the old BHD QoL proxy, remove **this project's old**
+`dinput8.dll` before installing `winmm.dll`, so the patches are not applied twice.
+Copy your previous settings from `dinput8.ini` to `winmm.ini`. The new proxy does
+not read `dinput8.ini`; another mod can use that filename independently. A
+`dinput8.dll` supplied by another mod can coexist with this proxy, although mods
+that patch the same game code still require compatibility testing. Only one
+`winmm.dll` proxy can occupy the game directory.
+
+## `winmm.ini` options
 
 ### `[PatchGroups]`
 
@@ -84,8 +92,29 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=mingw32-toolchain.cmake
 cmake --build build
 ```
 
-The resulting DLL must be named `dinput8.dll`.
+The resulting DLL must be named `winmm.dll`. CMake also copies `winmm.ini` into
+the build directory. A 64-bit build is rejected because `dfbhd.exe` is 32-bit.
+
+Run the regression suite with:
+
+```sh
+ctest --test-dir build --output-on-failure
+```
+
+The WinMM integration test imports the SDK's multimedia API normally and verifies
+that the loader selects the built proxy. It checks all 193 named/ordinal exports,
+concurrent clock calls, the game's nine WinMM APIs, timer callbacks and additional
+wave/multimedia file calls against the system library. Run the math tests in
+Debug to keep their assertions enabled.
 
 ## Compatibility
 
 Before applying each modification, the DLL verifies the expected bytes in the executable. If the `dfbhd.exe` version is incompatible, the affected modification is not applied.
+
+Patch initialization runs once from the supported game's verified startup
+`timeGetTime`/`timeGetDevCaps` call sites (`0x00569F7A`/`0x00569FC5` return
+addresses). Calls made by other DLLs during loading only forward to native
+WinMM. `DllMain` performs no library loading, patch installation or thread waits.
+An executable with different startup call sites needs explicit compatibility
+support before these patches can initialize. No executable modification is
+required for the supported version, which imports `WINMM.dll` directly.
